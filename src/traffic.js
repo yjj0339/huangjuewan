@@ -149,7 +149,7 @@ export class PlayerCar {
   constructor(roads) {
     this.roads = roads;
     this.mesh = new THREE.Mesh(carGeo('sedan'),
-      new THREE.MeshStandardMaterial({ color: 0xff7a1f, metalness: 0.6, roughness: 0.32 }));
+      new THREE.MeshStandardMaterial({ color: 0xff7a1f, vertexColors: true, metalness: 0.6, roughness: 0.32 }));
     this.mesh.scale.set(1.12, 1.12, 1.12);
     this.mesh.castShadow = true;
     this.mesh.visible = false;
