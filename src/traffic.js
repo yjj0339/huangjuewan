@@ -169,7 +169,7 @@ export class PlayerCar {
     this.speed = 0;
     this.hint = '';
   }
-  spawn(road) {
+  place(road) {
     this.road = road || this.roads.mains[0];
     this.s = this.road.length * 0.42;
     this.lane = this.road.carriageways === 'dual' ? this.road.lanes - 1 : 1;

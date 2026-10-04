@@ -205,12 +205,12 @@ export function buildNetwork() {
   }
   const A = mains[0], B = mains[1], C = mains[2], D = mains[3];
 
-  // 地面道路（层1，延伸进城市深处）
-  grounds.push(new Road('地面·滨江路', 'ground', 'G', { carriageways: 'dual', lanes: 3, median: 2.4, width: 13 },
+  // 地面道路（层1，延伸进城市深处；双向双幅，宽度由车道自动推算）
+  grounds.push(new Road('地面·滨江路', 'ground', 'G', { carriageways: 'dual', lanes: 3, median: 2.4 },
     lineRoad(V3(-2300, LEVELS.G, 90), V3(2300, LEVELS.G, 90))));
-  grounds.push(new Road('地面·林荫大道', 'ground', 'G', { carriageways: 'dual', lanes: 3, median: 2.4, width: 13 },
+  grounds.push(new Road('地面·林荫大道', 'ground', 'G', { carriageways: 'dual', lanes: 3, median: 2.4 },
     lineRoad(V3(-90, LEVELS.G, 2300), V3(-90, LEVELS.G, -2300))));
-  grounds.push(new Road('地面·北横路', 'ground', 'G', { carriageways: 'dual', lanes: 2, median: 2, width: 11 },
+  grounds.push(new Road('地面·北横路', 'ground', 'G', { carriageways: 'dual', lanes: 2, median: 2 },
     lineRoad(V3(-2300, LEVELS.G, -280), V3(2300, LEVELS.G, -280))));
   const G1 = grounds[0], G2 = grounds[1], G3 = grounds[2];
 
@@ -278,8 +278,7 @@ export function buildNetwork() {
     road.exit = { road: G1, s: sG };
     road.merge = { road: C, s: sC };
     ramps.push(road);
-  }
-  // SP2：西北象限，层4 主线C → 地面 G2，逆时针下降 1.5 圈
+  }  // SP2：西北象限，层4 主线C → 地面 G2，逆时针下降 1.5 圈
   {
     const sp = spiralRamp('匝道SP2·螺旋下行', V3(-155, 0, -115), 66, 44, Math.PI * 0.22, 1.5, -1, LEVELS.C, LEVELS.G);
     const arcPts = arcRoad(sp.center, sp.rOuter, sp.rInner, sp.a0, sp.a1, sp.y0, sp.y1, 4);
@@ -317,7 +316,7 @@ export function buildCollisionGrid(roads) {
   }
   return {
     cell,
-    query(x, z, radius) {
+    circle(x, z, radius) {
       const out = [];
       const x0 = Math.floor((x - radius) / cell), x1 = Math.floor((x + radius) / cell);
       const z0 = Math.floor((z - radius) / cell), z1 = Math.floor((z + radius) / cell);

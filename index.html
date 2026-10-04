@@ -94,7 +94,9 @@
     #legend { display: none; }
     #drive-hud { top: 8px; padding: 6px 12px; }
     #drive-hud b { font-size: 22px; }
-    #touch-controls { bottom: 170px; }
+    #touch-controls { bottom: 200px; gap: 8px; }
+    #touch-controls button { width: 60px; height: 52px; font-size: 15px; border-radius: 13px; }
+    body.in-car #title { display: none; }
   }
 </style>
 </head>
@@ -138,6 +140,7 @@
   <button data-view="north">北向远眺</button>
   <button id="followRandom">🎬 跟随车辆</button>
   <button id="drive">🚗 自由驾驶</button>
+  <button id="sound">🔊 音效</button>
   <button id="spin">自动环视</button>
 </div>
 

@@ -209,7 +209,7 @@ export function buildPiers(roads, grid) {
         // 基座
         const base = new THREE.BoxGeometry(rBot * 2 + 1.4, 1.2, rBot * 2 + 1.4);
         items.push({ geo: base, matrix: new THREE.Matrix4().makeTranslation(x, 0.6, z), color: 0xa6a8aa });
-        placed.push({ x, z });
+        placed.push({ x, z, road: road.name, s: ss, capY, h });
         done = true;
         break;
       }
@@ -220,10 +220,11 @@ export function buildPiers(roads, grid) {
 }
 
 function blocked(grid, x, z, capY, selfRoad) {
-  const near = grid.query(x, z, 8);
+  // 桥墩不得穿过任何更低桥面：检测半径须覆盖最大半幅宽（主线 dual ≈13m）+ 柱半径
+  const near = grid.circle(x, z, 18);
   for (const q of near) {
-    if (Math.abs(q.x - x) > 7 || Math.abs(q.z - z) > 7) continue;
-    if (q.y < capY - 0.6) return true; // 有更低的桥面穿过 → 桥墩会撞穿它
+    if (Math.abs(q.x - x) > 16 || Math.abs(q.z - z) > 16) continue;
+    if (q.y < capY - 0.6) return true;
   }
   return false;
 }

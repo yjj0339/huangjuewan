@@ -427,10 +427,10 @@ export function makeCityGround() {
     }
   }
   // 街道网格
-  g.fillStyle = '#b2b6ba';
+  g.fillStyle = '#999fa5';
   for (let i = 0; i <= S / cell; i++) {
-    g.fillRect(i * cell - 3.2, 0, 6.4, S);
-    g.fillRect(0, i * cell - 3.2, S, 6.4);
+    g.fillRect(i * cell - 2.9, 0, 5.8, S);
+    g.fillRect(0, i * cell - 2.9, S, 5.8);
   }
   // 街道中线
   g.strokeStyle = 'rgba(230,232,234,0.75)';

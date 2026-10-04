@@ -121,31 +121,36 @@ export function makeSigns(roads, signMats) {
   return g;
 }
 
-// ---------- 地面道路（平铺） ----------
+// ---------- 地面道路（双幅平铺，与高架车道逻辑一致） ----------
 export function makeGroundRoads(grounds, asphaltTexByLanes) {
   const g = new THREE.Group();
   grounds.forEach((road, i) => {
     const p0 = road.pts[0], p1 = road.pts[road.pts.length - 1];
     const len = p0.distanceTo(p1);
-    const tex = asphaltTexByLanes[road.lanes].tex.clone();
-    tex.needsUpdate = true;
-    tex.repeat.set(1, len / 18);
-    const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(road.width, len),
-      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.94, color: 0xcfcfcf }));
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.rotation.z = -Math.atan2(p1.z - p0.z, p1.x - p0.x);
-    mesh.position.set((p0.x + p1.x) / 2, 0.05 + i * 0.025, (p0.z + p1.z) / 2);
-    mesh.receiveShadow = true;
-    g.add(mesh);
+    const dir = new THREE.Vector3().subVectors(p1, p0).normalize();
+    const side = new THREE.Vector3(dir.z, 0, -dir.x);
+    const rotZ = -Math.atan2(dir.z, dir.x);
+    const cw = (road.width - road.median) / 2; // 单幅宽
+    for (const sgn of [1, -1]) {
+      const t = asphaltTexByLanes[road.lanes].tex.clone();
+      t.needsUpdate = true;
+      t.repeat.set(1, len / 18);
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(cw, len),
+        new THREE.MeshStandardMaterial({ map: t, roughness: 0.94, color: 0xcfcfcf }));
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.rotation.z = rotZ;
+      mesh.position.set((p0.x + p1.x) / 2, 0.05 + i * 0.025 + (sgn > 0 ? 0.004 : 0), (p0.z + p1.z) / 2)
+        .addScaledVector(side, sgn * (road.median / 2 + cw / 2));
+      mesh.receiveShadow = true;
+      g.add(mesh);
+    }
     // 路缘石
     for (const sgn of [1, -1]) {
       const curb = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.22, len),
         new THREE.MeshStandardMaterial({ color: 0xc2c4c6, roughness: 0.8 }));
-      const dir = new THREE.Vector3().subVectors(p1, p0).normalize();
-      const side = new THREE.Vector3(dir.z, 0, -dir.x);
-      curb.position.copy(mesh.position).addScaledVector(side, sgn * (road.width / 2 + 0.17));
-      curb.position.y = 0.11;
+      curb.position.set((p0.x + p1.x) / 2, 0.11, (p0.z + p1.z) / 2)
+        .addScaledVector(side, sgn * (road.width / 2 + 0.17));
       curb.rotation.y = Math.atan2(dir.x, dir.z);
       g.add(curb);
     }
@@ -281,7 +286,7 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   // 住宅楼：主楼 + 女儿墙 + 楼梯间 + 水箱
   const resiItems = [];
   B(resiItems, 24, 33, 14, 0, 16.5, 0, WALL);
-  B(resiItems, 24.8, 1.1, 0.6, 0, 33, 7, WALL * 0 + 0xd6cfc2);
+  B(resiItems, 24.8, 1.1, 0.6, 0, 33, 7, 0xd6cfc2);
   B(resiItems, 24.8, 1.1, 0.6, 0, 33, -7, 0xd6cfc2);
   B(resiItems, 0.6, 1.1, 14.8, 12.1, 33, 0, 0xd6cfc2);
   B(resiItems, 0.6, 1.1, 14.8, -12.1, 33, 0, 0xd6cfc2);

@@ -25,6 +25,8 @@ renderer.toneMappingExposure = 0.94;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.getElementById('app').appendChild(renderer.domElement);
 
+const params = new URLSearchParams(location.search); // 诊断/截图参数（全文件可用）
+
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xc9d9e6, 1900, 6800);
 
@@ -34,8 +36,8 @@ camera.position.set(620, 470, 620);
 // ---------- 纹理与材质 ----------
 const asphalt3 = makeAsphalt(3, { roadW: 11.5 });
 const asphalt2 = makeAsphalt(2, { roadW: 9 });
-const asphaltG3 = makeAsphalt(3, { roadW: 13 });
-const asphaltG2 = makeAsphalt(2, { roadW: 11 });
+const asphaltG3 = makeAsphalt(3, { roadW: 11.25 });
+const asphaltG2 = makeAsphalt(2, { roadW: 7.5 });
 const concreteTex = makeConcrete();
 const grassTex = makeGrass();
 const parkTex = makeGrass();
@@ -71,6 +73,11 @@ const piers = buildPiers([...net.mains, ...net.ramps], grid);
 const pierMesh = new THREE.Mesh(piers.geo, concreteMat);
 pierMesh.castShadow = true;
 pierMesh.receiveShadow = true;
+if (params.get('hidepiers')) pierMesh.visible = false; // 诊断开关
+if (params.get('pierdbg')) {
+  const near = piers.placed.filter(p => Math.abs(p.x - 205) < 40 && Math.abs(p.z + 55) < 40 && p.capY > 11);
+  console.log('PIERDBG', JSON.stringify(near));
+}
 scene.add(pierMesh);
 
 // ---------- 地面：公园 + 道路 + 外圈 ----------
@@ -161,6 +168,55 @@ dom.addEventListener('wheel', (e) => {
   ctl.auto = false;
 }, { passive: false });
 
+// ---------- 音效：引擎声随车速 ----------
+let audio = null;
+let muted = false;
+const soundBtn = document.getElementById('sound');
+function ensureAudio() {
+  if (audio || muted) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const gain = ctx.createGain();
+    gain.gain.value = 0;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 700;
+    filter.Q.value = 1.6;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = 55;
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'square';
+    osc2.frequency.value = 28;
+    const g2 = ctx.createGain();
+    g2.gain.value = 0.3;
+    osc.connect(filter);
+    osc2.connect(g2);
+    g2.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc2.start();
+    audio = { ctx, gain, osc, osc2, filter };
+  } catch (err) { /* 无音频环境时静默 */ }
+}
+function engineSound(speed) {
+  if (!audio) return;
+  const t = audio.ctx.currentTime;
+  const f = 50 + Math.abs(speed) * 3.4;
+  audio.osc.frequency.setTargetAtTime(f, t, 0.08);
+  audio.osc2.frequency.setTargetAtTime(f / 2, t, 0.08);
+  audio.filter.frequency.setTargetAtTime(450 + Math.abs(speed) * 60, t, 0.1);
+  const g = muted ? 0 : Math.min(0.055, 0.014 + Math.abs(speed) * 0.0011);
+  audio.gain.gain.setTargetAtTime(g, t, 0.12);
+}
+soundBtn.addEventListener('click', () => {
+  muted = !muted;
+  if (!muted && mode !== 'orbit') ensureAudio();
+  soundBtn.textContent = muted ? '🔇 已静音' : '🔊 音效';
+  soundBtn.classList.toggle('on', !muted && mode !== 'orbit');
+});
+
 // ---------- 模式系统：环视 / 跟随车辆 / 自由驾驶 ----------
 let mode = 'orbit';          // 'orbit' | 'follow' | 'drive'
 let followCar = null;
@@ -174,21 +230,67 @@ const touchPad = document.getElementById('touch-controls');
 
 function setMode(m) {
   mode = m;
+  document.body.classList.toggle('in-car', m === 'drive' || m === 'follow');
   if (m === 'drive') {
     player.mesh.visible = true;
-    player.spawn(net.mains[0]);
+    player.place(net.mains[0]);
     followCar = null;
     ctl.auto = false;
-  } else if (m !== 'follow') {
+  } else if (m === 'follow') {
+    if (!followCar) followCar = traffic.cars[(Math.random() * traffic.cars.length) | 0];
+    ctl.auto = false;
+  } else {
     player.mesh.visible = false;
     followCar = null;
     camera.fov = 52;
     camera.updateProjectionMatrix();
   }
+  const inCar = (m === 'drive' || m === 'follow');
+  if (inCar) {
+    ensureAudio();
+    if (params.get('topview')) {
+      // 诊断：从目标正上方俯视（可带高度）
+      const h = parseFloat(params.get('topview')) || 45;
+      const f = m === 'drive' ? player.road.frameAt(player.s) : followCar.road.frameAt(followCar.s);
+      const base = m === 'drive' ? f.p.clone().addScaledVector(f.side, player.laneOff)
+        : f.p.clone().addScaledVector(f.side, followCar.laneOff);
+      camera.position.copy(base).add(new THREE.Vector3(0.01, h, 0.01));
+      camera.lookAt(base);
+    } else {
+      snapChase(); // 进入时直接吸附到理想追尾机位，不做长距离漂移
+    }
+  } else {
+    engineSound(0);
+  }
   touchPad.style.display = m === 'drive' ? 'flex' : 'none';
-  hud.style.display = (m === 'drive' || m === 'follow') ? 'block' : 'none';
+  hud.style.display = inCar ? 'block' : 'none';
   document.getElementById('drive').classList.toggle('on', m === 'drive');
+  document.getElementById('followRandom').classList.toggle('on', m === 'follow');
   document.getElementById('spin').style.visibility = m === 'orbit' ? 'visible' : 'hidden';
+}
+
+// 计算当前跟随/驾驶目标的追尾机位并直接摆放相机
+function snapChase() {
+  const up = new THREE.Vector3(0, 1, 0);
+  let pos, fwd, speed = 0, dist = 8.2, height = 3.4;
+  if (mode === 'drive') {
+    const f = player.road.frameAt(player.s);
+    pos = f.p.clone().addScaledVector(f.side, player.laneOff);
+    fwd = f.tan.clone();
+    speed = player.speed;
+  } else if (followCar) {
+    const f = followCar.road.frameAt(followCar.s);
+    pos = f.p.clone().addScaledVector(f.side, followCar.laneOff);
+    fwd = f.tan.clone().multiplyScalar(followCar.forward);
+    speed = followCar.speed;
+    const extra = followCar.kind === 'bus' ? 4.5 : followCar.kind === 'truck' ? 6 : 0;
+    dist = 8.5 + extra;
+    height = 3.3 + extra * 0.25;
+  } else return;
+  camera.position.copy(pos).addScaledVector(fwd, -dist).addScaledVector(up, height);
+  const look = pos.clone().addScaledVector(fwd, 12);
+  look.y += 1.4;
+  camera.lookAt(look);
 }
 function exitToOrbit() {
   setMode('orbit');
@@ -215,7 +317,10 @@ function handleClick(e) {
 
 // 点击（与拖拽区分）
 let downX = 0, downY = 0;
-dom.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; });
+dom.addEventListener('pointerdown', (e) => {
+  downX = e.clientX; downY = e.clientY;
+  if (audio && audio.ctx.state === 'suspended') audio.ctx.resume(); // 浏览器手势要求
+});
 addEventListener('pointerup', (e) => {
   if (Math.hypot(e.clientX - downX, e.clientY - downY) < 6) handleClick(e);
 });
@@ -296,7 +401,6 @@ spinBtn.addEventListener('click', () => {
 spinBtn.classList.add('on');
 
 // ---------- 无头截图/诊断钩子 ----------
-const params = new URLSearchParams(location.search);
 window.__READY = false;
 window.__DIAG = { tris: 0, calls: 0, cars: traffic.cars.length, piers: 0, fps: 0 };
 if (params.get('shot')) {
@@ -308,6 +412,7 @@ if (params.get('follow')) {
   followCar = traffic.cars[(Math.random() * traffic.cars.length) | 0];
   setMode('follow');
 }
+if (params.get('run')) input.up = true; // 截图钩子：驾驶模式自动踩油门
 
 // ---------- 主循环 ----------
 const clock = new THREE.Clock();
@@ -343,14 +448,17 @@ function tick() {
     const f = followCar.road.frameAt(followCar.s);
     const pos = f.p.clone().addScaledVector(f.side, followCar.laneOff);
     const fwd = f.tan.clone().multiplyScalar(followCar.forward);
-    chaseCam(pos, fwd, 8.5, 3.3, 9, dt, followCar.speed * followCar.forward);
+    const extra = followCar.kind === 'bus' ? 4.5 : followCar.kind === 'truck' ? 6 : 0;
+    chaseCam(pos, fwd, 8.5 + extra, 3.3 + extra * 0.25, 9, dt, followCar.speed * followCar.forward);
     focus.copy(pos);
+    engineSound(followCar.speed * followCar.forward);
     hudSpeed.textContent = Math.round(Math.abs(followCar.speed) * 3.6);
     hudRoad.textContent = followCar.road.name;
   } else if (mode === 'drive') {
     const st = player.update(dt, input);
     chaseCam(st.pos, st.fwd, 8.2 + st.speed * 0.05, 3.4, 12, dt, st.speed);
     focus.copy(st.pos);
+    engineSound(st.speed);
     hudSpeed.textContent = Math.round(st.speed * 3.6);
     hudRoad.textContent = player.road.name;
     hudHint.textContent = player.hint || 'W/↑ 油门 · S/↓ 刹车 · A/D 变道（出口提示出现时按 ←/→ 转入匝道）· ESC 退出';
@@ -370,6 +478,11 @@ function tick() {
     if (readyFrames === 6) {
       window.__DIAG.tris = renderer.info.render.triangles;
       window.__DIAG.calls = renderer.info.render.calls;
+      if (params.get('camdbg') && mode === 'drive') {
+        const p = player.mesh.position;
+        document.body.setAttribute('data-dbg',
+          `car=${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)} cam=${camera.position.x.toFixed(1)},${camera.position.y.toFixed(1)},${camera.position.z.toFixed(1)} s=${player.s.toFixed(0)}/${player.road.length.toFixed(0)}`);
+      }
       window.__READY = true;
       document.title = 'READY';
     }
