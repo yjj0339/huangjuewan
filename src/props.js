@@ -93,7 +93,7 @@ export function makeSigns(roads, signMats) {
     panel2.position.set(half * 0.42, postH - 2.5, 0.05);
     grp.add(panel2);
     grp.position.copy(f.p);
-    grp.rotation.y = Math.atan2(f.tan.x, f.tan.z);
+    grp.rotation.y = Math.atan2(f.tan.x, f.tan.z) + Math.PI; // 牌面朝向来车方向，文字正读
     g.add(grp);
   }
   // 立柱牌（匝道出口）
@@ -115,7 +115,7 @@ export function makeSigns(roads, signMats) {
     panel.position.set(0, 4.4, 0);
     grp.add(panel);
     grp.position.copy(f.p).addScaledVector(f.side, -(ed.road.width / 2 + 1.2));
-    grp.rotation.y = Math.atan2(f.tan.x, f.tan.z);
+    grp.rotation.y = Math.atan2(f.tan.x, f.tan.z) + Math.PI; // 牌面朝向来车方向
     g.add(grp);
   }
   return g;

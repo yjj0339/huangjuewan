@@ -379,6 +379,12 @@ export function makeCloudShadowNoise(seed = 5) {
     g.fillStyle = gr;
     g.fillRect(0, 0, S, S);
   }
+  // 径向淡出：中心有云影，边缘回到白色（乘法混合下即无效果），避免远处平面上出现摩尔纹
+  const fade = g.createRadialGradient(S / 2, S / 2, S * 0.18, S / 2, S / 2, S * 0.5);
+  fade.addColorStop(0, 'rgba(255,255,255,0)');
+  fade.addColorStop(1, 'rgba(255,255,255,1)');
+  g.fillStyle = fade;
+  g.fillRect(0, 0, S, S);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.NoColorSpace;

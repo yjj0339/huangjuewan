@@ -64,16 +64,15 @@ export function makeClouds(cloudTex, shadowNoise) {
     clouds.push(s);
     group.add(s);
   }
-  // 云影层（乘法混合的噪声面片，缓慢漂移 → 柔和移动阴影）
-  const shadowTex = shadowNoise.clone();
-  shadowTex.needsUpdate = true;
-  shadowTex.wrapS = shadowTex.wrapT = THREE.RepeatWrapping;
-  shadowTex.repeat.set(3.2, 3.2);
+  // 云影层（乘法混合，圆形+径向淡出：只覆盖立交核心区，远处不做平面以免条纹伪影）
+  const shadowTex = shadowNoise;
+  shadowTex.wrapS = shadowTex.wrapT = THREE.ClampToEdgeWrapping;
+  shadowTex.repeat.set(1, 1);
   const shadowMat = new THREE.MeshBasicMaterial({
     map: shadowTex, blending: THREE.MultiplyBlending, transparent: true,
-    opacity: 0.34, depthWrite: false, fog: false,
+    opacity: 0.42, depthWrite: false, fog: false,
   });
-  const shadowPlane = new THREE.Mesh(new THREE.PlaneGeometry(3600, 3600), shadowMat);
+  const shadowPlane = new THREE.Mesh(new THREE.CircleGeometry(1500, 48), shadowMat);
   shadowPlane.rotation.x = -Math.PI / 2;
   shadowPlane.position.y = 210;
   shadowPlane.renderOrder = 5;
@@ -83,8 +82,6 @@ export function makeClouds(cloudTex, shadowNoise) {
       c.position.x += c.userData.v * dt;
       if (c.position.x > 2400) c.position.x = -2400;
     }
-    shadowTex.offset.x += dt * 0.004;
-    shadowTex.offset.y += dt * 0.0016;
   };
   return group;
 }
