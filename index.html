@@ -44,6 +44,31 @@
     padding: 8px 14px; border-radius: 12px; color: #34495e; font-size: 13px;
     box-shadow: 0 2px 10px rgba(60,90,120,.15); border: 1px solid rgba(255,255,255,.8);
   }
+  /* 驾驶 HUD */
+  #drive-hud {
+    position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+    z-index: 10; display: none; text-align: center;
+    background: rgba(255,255,255,.78); backdrop-filter: blur(12px);
+    padding: 10px 22px; border-radius: 14px; color: #2c3e50;
+    box-shadow: 0 4px 18px rgba(60,90,120,.2); border: 1px solid rgba(255,255,255,.85);
+  }
+  #drive-hud .row1 { display: flex; align-items: baseline; gap: 8px; justify-content: center; }
+  #drive-hud b { font-size: 30px; font-weight: 700; color: #1f6fb8; }
+  #drive-hud .unit { font-size: 12px; color: #7f97ab; }
+  #hud-road { font-size: 14px; font-weight: 600; color: #34495e; }
+  #hud-hint { margin-top: 4px; font-size: 12.5px; color: #5d7288; }
+  /* 触屏驾驶按钮 */
+  #touch-controls {
+    position: fixed; bottom: 96px; left: 0; right: 0; z-index: 11;
+    display: none; justify-content: center; gap: 14px; pointer-events: none;
+  }
+  #touch-controls button {
+    pointer-events: auto; width: 74px; height: 60px; border: none; border-radius: 16px;
+    font-size: 17px; font-weight: 700; font-family: inherit; color: #2c3e50;
+    background: rgba(255,255,255,.85); box-shadow: 0 4px 14px rgba(60,90,120,.25);
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #touch-controls button:active { background: #3498db; color: #fff; }
   /* 图例 */
   #legend {
     position: fixed; top: 74px; right: 22px; z-index: 9;
@@ -67,6 +92,9 @@
     #title h1 { font-size: 19px; } #title p { font-size: 11px; }
     #panel button { font-size: 12px; padding: 7px 10px; }
     #legend { display: none; }
+    #drive-hud { top: 8px; padding: 6px 12px; }
+    #drive-hud b { font-size: 22px; }
+    #touch-controls { bottom: 170px; }
   }
 </style>
 </head>
@@ -79,6 +107,18 @@
 </div>
 
 <div id="fps-badge">FPS <b id="fps">--</b></div>
+
+<div id="drive-hud">
+  <div class="row1"><b id="hud-speed">0</b><span class="unit">km/h</span><span id="hud-road"></span></div>
+  <div id="hud-hint"></div>
+</div>
+
+<div id="touch-controls">
+  <button id="tc-brake">刹车</button>
+  <button id="tc-left">←</button>
+  <button id="tc-right">→</button>
+  <button id="tc-gas">油门</button>
+</div>
 
 <div id="legend">
   <b>立体层数</b><br>
@@ -96,6 +136,8 @@
   <button data-view="street">主线穿行</button>
   <button data-view="tower">塔俯市景</button>
   <button data-view="north">北向远眺</button>
+  <button id="followRandom">🎬 跟随车辆</button>
+  <button id="drive">🚗 自由驾驶</button>
   <button id="spin">自动环视</button>
 </div>
 

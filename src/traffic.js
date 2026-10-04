@@ -90,6 +90,7 @@ export class Traffic {
     for (const c of this.cars) (byKind[c.kind] = byKind[c.kind] || []).push(c);
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.55, roughness: 0.42 });
     const col = new THREE.Color();
+    this.insts = [];
     for (const [kName, list] of Object.entries(byKind)) {
       const inst = new THREE.InstancedMesh(carGeo(kName), mat, list.length);
       list.forEach((c, i) => {
@@ -98,10 +99,12 @@ export class Traffic {
         inst.setColorAt(i, col);
         c.inst = inst; c.idx = i;
       });
+      inst.userData.cars = list; // 拾取：instanceId → 车辆状态
       inst.castShadow = true;
       inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       this.group.add(inst);
       this.kinds[kName] = inst;
+      this.insts.push(inst);
     }
   }
   laneOffsets(road) {
@@ -114,7 +117,6 @@ export class Traffic {
   }
   update(dt) {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1, 1, 1);
-    const up = new THREE.Vector3(0, 1, 0);
     for (const c of this.cars) {
       c.s += c.speed * c.forward * dt;
       if (c.s > c.road.length) c.s -= c.road.length;
@@ -128,5 +130,101 @@ export class Traffic {
       c.inst.setMatrixAt(c.idx, m);
     }
     for (const inst of Object.values(this.kinds)) inst.instanceMatrix.needsUpdate = true;
+  }
+}
+
+function laneOffsetsOf(road) {
+  const L = 3.75;
+  if (road.carriageways === 'dual') {
+    const off = road.median / 2;
+    return Array.from({ length: road.lanes }, (_, i) => off + L * (i + 0.5));
+  }
+  return Array.from({ length: road.lanes }, (_, i) => (i - (road.lanes - 1) / 2) * L);
+}
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// 玩家驾驶车：沿路网轨道行驶，出口窗口内按 ←/→ 转入匝道，匝道尽头自动并入主线
+export class PlayerCar {
+  constructor(roads) {
+    this.roads = roads;
+    this.mesh = new THREE.Mesh(carGeo('sedan'),
+      new THREE.MeshStandardMaterial({ color: 0xff7a1f, metalness: 0.6, roughness: 0.32 }));
+    this.mesh.scale.set(1.12, 1.12, 1.12);
+    this.mesh.castShadow = true;
+    this.mesh.visible = false;
+    // 出口登记：road → [{s, ramp}]（升序）
+    this.exitsByRoad = new Map();
+    for (const r of roads.ramps) {
+      if (!r.exit) continue;
+      const arr = this.exitsByRoad.get(r.exit.road) || [];
+      arr.push({ s: r.exit.s, ramp: r });
+      this.exitsByRoad.set(r.exit.road, arr);
+    }
+    for (const arr of this.exitsByRoad.values()) arr.sort((a, b) => a.s - b.s);
+    this.road = roads.mains[0];
+    this.s = this.road.length * 0.42;
+    this.lane = 2;
+    this.laneOff = 0;
+    this.speed = 0;
+    this.hint = '';
+  }
+  spawn(road) {
+    this.road = road || this.roads.mains[0];
+    this.s = this.road.length * 0.42;
+    this.lane = this.road.carriageways === 'dual' ? this.road.lanes - 1 : 1;
+    this.laneOff = laneOffsetsOf(this.road)[this.lane];
+    this.speed = 0;
+    this.mesh.visible = true;
+  }
+  switchRoad(r, s) {
+    this.road = r;
+    this.s = clamp(s, 1, r.length - 1);
+    this.lane = r.carriageways === 'dual' ? r.lanes - 1 : 1;
+  }
+  update(dt, input) {
+    const road = this.road;
+    const limit = road.kind === 'main' ? 32 : road.kind === 'ramp' ? 17 : 15;
+    if (input.up) this.speed += 12 * dt;
+    else if (input.down) this.speed -= 28 * dt;
+    else this.speed -= 5.5 * dt;
+    this.speed = clamp(this.speed, 0, limit);
+    this.s += this.speed * dt;
+
+    // 出口窗口：按 ←/→ 转入匝道；窗口外则变更车道
+    const offsets = laneOffsetsOf(road);
+    let taking = null;
+    for (const ex of (this.exitsByRoad.get(road) || [])) {
+      if (this.s > ex.s - 30 && this.s < ex.s + 10) {
+        this.hint = '按 ← / → 转入 ' + ex.ramp.name;
+        if (input.turn !== 0) { taking = ex; input.turn = 0; }
+        break;
+      }
+    }
+    if (taking) {
+      this.switchRoad(taking.ramp, 1);
+      this.laneOff = 0;
+      this.hint = '已驶入 ' + taking.ramp.name;
+    } else {
+      if (this.s <= road.length - 1) {
+        if (input.turn !== 0) { this.lane = clamp(this.lane + input.turn, 0, offsets.length - 1); input.turn = 0; }
+        this.hint = '';
+      }
+      const target = offsets[clamp(this.lane, 0, offsets.length - 1)];
+      this.laneOff += (target - this.laneOff) * Math.min(1, dt * 4);
+    }
+    // 线路末端：匝道并入主线 / 主线落地后环回
+    if (!taking && this.s >= road.length - 0.5) {
+      if (road.merge) this.switchRoad(road.merge.road, road.merge.s + 2);
+      else this.s = 2;
+    }
+    // 位姿
+    const f = this.road.frameAt(this.s);
+    const pos = f.p.clone().addScaledVector(f.side, this.laneOff);
+    const fwd = f.tan.clone();
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), fwd);
+    this.mesh.position.copy(pos);
+    this.mesh.quaternion.copy(q);
+    return { pos, fwd, speed: this.speed };
   }
 }

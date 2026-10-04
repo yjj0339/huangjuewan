@@ -236,9 +236,26 @@ function clearOfRoads(x, z, r, groundRoads, lowSamples) {
   return true;
 }
 
-// ---------- 远景城市 ----------
-export function makeCity(facadeTex, roads) {
+// ---------- 远景城市（四类建筑原型，带屋顶细节） ----------
+function bboxMerge(items) { return mergeGeoms(items); }
+const B = (items, w, h, d, x, y, z, color) =>
+  items.push({ geo: new THREE.BoxGeometry(w, h, d), matrix: new THREE.Matrix4().makeTranslation(x, y, z), color });
+const C = (items, r0, r1, h, x, y, z, color, seg = 8) =>
+  items.push({ geo: new THREE.CylinderGeometry(r0, r1, h, seg), matrix: new THREE.Matrix4().makeTranslation(x, y, z), color });
+
+export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   const group = new THREE.Group();
+  // 城市街区地坪（街道网格，建筑落在街区里而不是草坪上）
+  {
+    const gt = texGround.clone();
+    gt.needsUpdate = true;
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(4600, 4600),
+      new THREE.MeshStandardMaterial({ map: gt, roughness: 0.95 }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = 0.012;
+    ground.receiveShadow = true;
+    group.add(ground);
+  }
   const corridor = [];
   for (const road of [...roads.mains, ...roads.grounds]) {
     for (let s = 0; s <= road.length; s += 10) corridor.push(road.pts[road._seg(s)]);
@@ -250,85 +267,124 @@ export function makeCity(facadeTex, roads) {
     }
     return true;
   };
-  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-  const mat = new THREE.MeshStandardMaterial({ map: facadeTex, roughness: 0.75, metalness: 0.08 });
-  const glassMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.45 });
-  const N = 560;
-  const inst = new THREE.InstancedMesh(boxGeo, mat, N);
-  const instTall = new THREE.InstancedMesh(boxGeo, glassMat, 160);
+  // 占位网格：防止建筑互相叠压
+  const occupied = new Set();
+  const claim = (x, z) => {
+    const key = Math.round(x / 36) + ',' + Math.round(z / 36);
+    if (occupied.has(key)) return false;
+    occupied.add(key);
+    return true;
+  };
+
+  // ---- 原型几何 ----
+  const WALL = 0xffffff, ROOF = 0x4a4d52, METAL = 0x8a9096, DARKCORE = 0x3a3e44;
+  // 住宅楼：主楼 + 女儿墙 + 楼梯间 + 水箱
+  const resiItems = [];
+  B(resiItems, 24, 33, 14, 0, 16.5, 0, WALL);
+  B(resiItems, 24.8, 1.1, 0.6, 0, 33, 7, WALL * 0 + 0xd6cfc2);
+  B(resiItems, 24.8, 1.1, 0.6, 0, 33, -7, 0xd6cfc2);
+  B(resiItems, 0.6, 1.1, 14.8, 12.1, 33, 0, 0xd6cfc2);
+  B(resiItems, 0.6, 1.1, 14.8, -12.1, 33, 0, 0xd6cfc2);
+  B(resiItems, 6, 2.6, 4.5, 3, 34.3, 0, 0xd0c9bc);
+  C(resiItems, 1.05, 1.05, 2.4, -5.5, 34.2, 3.2, METAL);
+  C(resiItems, 1.05, 1.05, 2.4, -5.5, 34.2, -3.2, METAL);
+  const resiGeo = bboxMerge(resiItems);
+  // 写字楼：玻璃主楼 + 退台 + 屋面核心筒
+  const offItems = [];
+  B(offItems, 26, 52, 26, 0, 26, 0, WALL);
+  B(offItems, 19, 9, 19, 0, 56.5, 0, WALL);
+  B(offItems, 20, 1, 20, 0, 52.2, 0, 0xb9c2c9);
+  B(offItems, 7, 3, 7, 0, 62.5, 0, DARKCORE);
+  const offGeo = bboxMerge(offItems);
+  // 商业裙楼：大盒子 + 底商带 + 屋面机组
+  const podItems = [];
+  B(podItems, 36, 9, 24, 0, 4.5, 0, WALL);
+  B(podItems, 37, 0.8, 25, 0, 9.1, 0, 0xcac4ba);
+  B(podItems, 5, 2.2, 4, 8, 10.4, 4, DARKCORE);
+  B(podItems, 4, 1.8, 3.4, -7, 10.2, -3, DARKCORE);
+  const podGeo = bboxMerge(podItems);
+  // 点式塔楼裙房（上部塔身用玻璃材质，单独实例化）
+  const baseItems = [];
+  B(baseItems, 30, 7.5, 30, 0, 3.75, 0, WALL);
+  B(baseItems, 30.8, 0.9, 30.8, 0, 7.6, 0, 0xcac4ba);
+  const baseGeo = bboxMerge(baseItems);
+  const towerItems = [];
+  B(towerItems, 18, 42, 18, 0, 21, 0, WALL);
+  B(towerItems, 18.7, 1, 18.7, 0, 42.4, 0, 0xb9c2c9);
+  B(towerItems, 6, 2.6, 6, 0, 44, 0, DARKCORE);
+  const towerGeo = bboxMerge(towerItems);
+
+  const matResi = new THREE.MeshStandardMaterial({ map: texResi, vertexColors: true, roughness: 0.85 });
+  const matGlass = new THREE.MeshStandardMaterial({ map: texGlass, vertexColors: true, roughness: 0.32, metalness: 0.38 });
+  const matShop = new THREE.MeshStandardMaterial({ map: texShop, vertexColors: true, roughness: 0.8 });
+
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
   const col = new THREE.Color();
-  let n = 0, nt = 0;
-  for (let tries = 0; tries < N * 14 && (n < N || nt < 160); tries++) {
-    const a = Math.random() * Math.PI * 2;
-    const r = 540 + Math.pow(Math.random(), 0.7) * 1500;
-    const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    // 让建筑对齐街区网格
-    const gx = Math.round(x / 55) * 55, gz = Math.round(z / 55) * 55;
-    if (Math.hypot(gx, gz) < 530) continue;
-    const w = 14 + Math.random() * 34, d = 14 + Math.random() * 34;
-    if (!clearOfCorridor(gx, gz, Math.max(w, d) / 2 + 20)) continue;
-    const tall = Math.random() < 0.24 && nt < 160;
-    q.setFromAxisAngle(UP, Math.floor(Math.random() * 4) * Math.PI / 2);
-    if (tall) {
-      const h = 70 + Math.random() * 150;
-      sc.set(w * 0.8, h, d * 0.8);
-      m.compose(new THREE.Vector3(gx, h / 2, gz), q, sc);
-      instTall.setMatrixAt(nt, m);
-      const t2 = Math.random();
-      if (t2 < 0.5) col.setHSL(0.55, 0.16 + Math.random() * 0.1, 0.5 + Math.random() * 0.12);
-      else col.setHSL(0.08, 0.04, 0.58 + Math.random() * 0.12);
-      instTall.setColorAt(nt, col);
-      nt++;
-    } else {
-      const h = 14 + Math.random() * 48;
-      sc.set(w, h, d);
-      m.compose(new THREE.Vector3(gx, h / 2, gz), q, sc);
-      inst.setMatrixAt(n, m);
-      const t = Math.random();
-      if (t < 0.5) col.setHSL(0.08, 0.05 + Math.random() * 0.06, 0.6 + Math.random() * 0.14);
-      else if (t < 0.8) col.setHSL(0.58, 0.04 + Math.random() * 0.05, 0.55 + Math.random() * 0.12);
-      else col.setHSL(0.12, 0.08, 0.58 + Math.random() * 0.1);
-      inst.setColorAt(n, col);
-      n++;
+  const fills = (n, rMin, rMax, place) => {
+    let n0 = 0;
+    for (let tries = 0; tries < n * 16 && n0 < n; tries++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = rMin + Math.pow(Math.random(), 0.75) * (rMax - rMin);
+      const gx = Math.round(Math.cos(a) * r / 55) * 55;
+      const gz = Math.round(Math.sin(a) * r / 55) * 55;
+      if (Math.hypot(gx, gz) < 530) continue;
+      if (!claim(gx, gz)) continue;
+      if (!clearOfCorridor(gx, gz, 34)) continue;
+      place(gx, gz, n0);
+      n0++;
     }
-  }
-  inst.count = n;
-  instTall.count = nt;
-  inst.castShadow = false;
-  inst.receiveShadow = false;
-  instTall.castShadow = false;
-  group.add(inst);
-  group.add(instTall);
-  // 屋顶盖板（避免顶面出现窗格纹理）
-  {
-    const capGeo = new THREE.BoxGeometry(1, 1, 1);
-    const capMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
-    const caps = new THREE.InstancedMesh(capGeo, capMat, n + nt);
-    const posArr = inst.instanceMatrix.array;
-    const cm = new THREE.Matrix4();
-    let ci = 0;
-    const addCap = (srcInst, count) => {
-      const arr = srcInst.instanceMatrix.array;
-      for (let i = 0; i < count; i++) {
-        const o = i * 16;
-        const sx = Math.hypot(arr[o], arr[o + 2]);
-        const sy = Math.abs(arr[o + 5]);
-        const sz = Math.hypot(arr[o + 8], arr[o + 10]);
-        const x = arr[o + 12], y = arr[o + 13], z = arr[o + 14];
-        cm.makeScale(sx * 1.05, 0.8, sz * 1.05);
-        cm.setPosition(x, y + sy / 2 + 0.4, z);
-        caps.setMatrixAt(ci, cm);
-        col.setHSL(0.07, 0.04, 0.32 + Math.random() * 0.14);
-        caps.setColorAt(ci, col);
-        ci++;
-      }
-    };
-    addCap(inst, n);
-    addCap(instTall, nt);
-    caps.count = ci;
-    group.add(caps);
-  }
+    return n0;
+  };
+  const setInst = (inst, i, x, y, z, sx, sy, sz, tint) => {
+    q.setFromAxisAngle(UP, Math.floor(Math.random() * 4) * Math.PI / 2);
+    sc.set(sx, sy, sz);
+    m.compose(new THREE.Vector3(x, y, z), q, sc);
+    inst.setMatrixAt(i, m);
+    inst.setColorAt(i, col.set(tint));
+  };
+  const warm = () => new THREE.Color().setHSL(0.07 + Math.random() * 0.06, 0.05 + Math.random() * 0.07, 0.72 + Math.random() * 0.13).getHex();
+  const cool = () => new THREE.Color().setHSL(0.55 + Math.random() * 0.06, 0.06 + Math.random() * 0.08, 0.66 + Math.random() * 0.13).getHex();
+
+  // 住宅楼
+  const NResi = 300;
+  const resi = new THREE.InstancedMesh(resiGeo, matResi, NResi);
+  fills(NResi, 560, 2050, (x, z, i) => {
+    setInst(resi, i, x, 0, z, 0.72 + Math.random() * 0.5, 0.62 + Math.random() * 0.75, 0.72 + Math.random() * 0.5, warm());
+  });
+  resi.count = NResi;
+  resi.castShadow = false;
+  group.add(resi);
+
+  // 写字楼
+  const NOff = 130;
+  const office = new THREE.InstancedMesh(offGeo, matGlass, NOff);
+  fills(NOff, 560, 2050, (x, z, i) => {
+    setInst(office, i, x, 0, z, 0.78 + Math.random() * 0.5, 0.75 + Math.random() * 0.85, 0.78 + Math.random() * 0.5, cool());
+  });
+  office.count = NOff;
+  group.add(office);
+
+  // 商业裙楼
+  const NPois = 150;
+  const podium = new THREE.InstancedMesh(podGeo, matShop, NPois);
+  fills(NPois, 560, 1500, (x, z, i) => {
+    setInst(podium, i, x, 0, z, 0.75 + Math.random() * 0.6, 0.75 + Math.random() * 0.6, 0.75 + Math.random() * 0.6, warm());
+  });
+  podium.count = NPois;
+  group.add(podium);
+
+  // 点式塔楼（裙房 + 玻璃塔身同位）
+  const NPoint = 80;
+  const pbase = new THREE.InstancedMesh(baseGeo, matShop, NPoint);
+  const ptower = new THREE.InstancedMesh(towerGeo, matGlass, NPoint);
+  fills(NPoint, 620, 1750, (x, z, i) => {
+    setInst(pbase, i, x, 0, z, 0.8, 1, 0.8, warm());
+    setInst(ptower, i, x, 7.5, z, 0.85 + Math.random() * 0.3, 0.75 + Math.random() * 0.6, 0.85 + Math.random() * 0.3, cool());
+  });
+  pbase.count = NPoint; ptower.count = NPoint;
+  group.add(pbase);
+  group.add(ptower);
+
   // 地标高塔（退台式玻璃塔 + 天线）
   const towerMat = new THREE.MeshStandardMaterial({ color: 0xc9ced3, roughness: 0.5, metalness: 0.25 });
   for (let i = 0; i < 7; i++) {
@@ -338,10 +394,10 @@ export function makeCity(facadeTex, roads) {
     if (!clearOfCorridor(x, z, 60)) continue;
     const h = 170 + Math.random() * 120;
     const w = 24 + Math.random() * 16;
-    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h * 0.72, w), glassMat);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h * 0.72, w), glassMatLandmark);
     body.position.set(x, h * 0.36, z);
     group.add(body);
-    const upper = new THREE.Mesh(new THREE.BoxGeometry(w * 0.72, h * 0.28, w * 0.72), glassMat);
+    const upper = new THREE.Mesh(new THREE.BoxGeometry(w * 0.72, h * 0.28, w * 0.72), glassMatLandmark);
     upper.position.set(x, h * 0.86, z);
     group.add(upper);
     const crown = new THREE.Mesh(new THREE.BoxGeometry(w * 0.4, h * 0.06, w * 0.4), towerMat);
@@ -353,6 +409,7 @@ export function makeCity(facadeTex, roads) {
   }
   return group;
 }
+const glassMatLandmark = new THREE.MeshStandardMaterial({ color: 0x8fb4c8, roughness: 0.22, metalness: 0.55 });
 
 // ---------- 公园：内部草皮、步道、池塘 ----------
 export function makePark(parkTex, pathTex, waterTex) {

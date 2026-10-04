@@ -180,6 +180,7 @@ export function buildPiers(roads, grid) {
         if (ss < 8 || ss > road.length - 8) continue;
         const f = road.frameAt(ss);
         const x = f.p.x, z = f.p.z, deckY = f.p.y;
+        if (deckY < 2.2) continue; // 已贴地段不再立墩
         if (blocked(grid, x, z, deckY - 1.6, road)) continue;
         if (placed.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 < 64)) continue;
         const groundY = 0;

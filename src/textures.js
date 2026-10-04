@@ -183,26 +183,112 @@ export function makeGrass() {
 }
 
 // ---------- 建筑立面 ----------
-export function makeFacade(light = true) {
-  const W = 256, H = 256, cols = 8, rows = 8;
+// 住宅楼：窗 + 阳台板 + 空调外机 + 底部基座层
+export function makeResiFacade() {
+  const W = 256, H = 256, cols = 6, rows = 8;
   const [c, g] = canvas(W, H);
-  const rnd = rand(light ? 300 : 301);
-  g.fillStyle = light ? '#b7bdc2' : '#9aa1a7';
+  const rnd = rand(300);
+  g.fillStyle = '#cdc6ba';
   g.fillRect(0, 0, W, H);
-  // 楼层分隔
-  g.fillStyle = 'rgba(70,76,82,0.4)';
-  for (let r = 0; r < rows; r++) g.fillRect(0, r * (H / rows) + H / rows - 4, W, 3);
-  // 窗
+  // 墙面细颗粒
+  for (let i = 0; i < 4000; i++) {
+    const v = 190 + (rnd() - 0.5) * 26;
+    g.fillStyle = `rgba(${v},${v - 4},${v - 10},0.3)`;
+    g.fillRect(rnd() * W, rnd() * H, 2, 2);
+  }
+  const cw = W / cols, ch = H / rows;
+  for (let r = 0; r < rows; r++) {
+    // 层间腰线 + 阳台板
+    g.fillStyle = 'rgba(255,255,255,0.5)';
+    g.fillRect(0, r * ch + ch - 5, W, 3);
+    g.fillStyle = 'rgba(120,112,100,0.35)';
+    g.fillRect(0, r * ch + ch - 2, W, 2);
+    for (let col = 0; col < cols; col++) {
+      const x = col * cw, y = r * ch;
+      const wx = x + cw * 0.18, wy = y + ch * 0.16, ww = cw * 0.5, wh = ch * 0.42;
+      // 窗
+      const lit = rnd();
+      g.fillStyle = lit < 0.12 ? '#c8d6de' : lit < 0.55 ? '#5d7688' : '#3e5468';
+      g.fillRect(wx, wy, ww, wh);
+      g.fillStyle = 'rgba(255,255,255,0.22)';
+      g.fillRect(wx, wy, ww, wh * 0.3);
+      // 阳台栏板（窗下浅色板 + 阴影线）
+      g.fillStyle = '#ddd6c9';
+      g.fillRect(wx - cw * 0.06, wy + wh + 2, ww + cw * 0.12, ch * 0.16);
+      g.fillStyle = 'rgba(90,84,74,0.4)';
+      g.fillRect(wx - cw * 0.06, wy + wh + 2 + ch * 0.16, ww + cw * 0.12, 2);
+      // 空调外机
+      if (rnd() < 0.4) {
+        g.fillStyle = '#b6bcc2';
+        g.fillRect(wx + ww * 0.15, wy + wh * 0.55, ww * 0.32, wh * 0.34);
+      }
+    }
+  }
+  // 底部基座层（商铺/入口）
+  g.fillStyle = '#8f8a80';
+  g.fillRect(0, H - ch * 0.9, W, ch * 0.9);
+  g.fillStyle = '#5c6a74';
+  for (let col = 0; col < cols; col++) g.fillRect(col * cw + cw * 0.12, H - ch * 0.72, cw * 0.76, ch * 0.5);
+  return toTex(c);
+}
+
+// 写字楼玻璃幕墙：竖向龙骨 + 随机反射玻璃板 + 层间横梁
+export function makeGlassFacade() {
+  const W = 256, H = 256, cols = 10, rows = 14;
+  const [c, g] = canvas(W, H);
+  const rnd = rand(301);
+  g.fillStyle = '#9db4c4';
+  g.fillRect(0, 0, W, H);
   const cw = W / cols, ch = H / rows;
   for (let r = 0; r < rows; r++) {
     for (let col = 0; col < cols; col++) {
-      const x = col * cw + cw * 0.18, y = r * ch + ch * 0.16;
-      const w = cw * 0.64, h = ch * 0.5;
-      const lit = rnd();
-      g.fillStyle = lit < 0.10 ? '#c9d6dd' : lit < 0.5 ? '#6d8899' : '#42586a';
-      g.fillRect(x, y, w, h);
-      g.fillStyle = 'rgba(255,255,255,0.18)';
-      g.fillRect(x, y, w, h * 0.28);
+      const x = col * cw, y = r * ch;
+      const t = rnd();
+      g.fillStyle = t < 0.3 ? '#7f9cb2' : t < 0.6 ? '#6487a1' : t < 0.85 ? '#8ba9be' : '#4e6d85';
+      g.fillRect(x + 1, y + 1, cw - 2, ch - 3);
+      // 天空反射渐变
+      const gr = g.createLinearGradient(0, y, 0, y + ch);
+      gr.addColorStop(0, 'rgba(255,255,255,0.22)');
+      gr.addColorStop(1, 'rgba(20,40,60,0.16)');
+      g.fillStyle = gr;
+      g.fillRect(x + 1, y + 1, cw - 2, ch - 3);
+    }
+    // 层间梁
+    g.fillStyle = 'rgba(235,240,244,0.75)';
+    g.fillRect(0, r * ch + ch - 2.5, W, 2.5);
+  }
+  // 竖向龙骨
+  g.fillStyle = 'rgba(226,232,236,0.8)';
+  for (let col = 0; col <= cols; col++) g.fillRect(col * cw - 1, 0, 2, H);
+  return toTex(c);
+}
+
+// 商业裙楼：底商大玻璃 + 招牌带 + 上部小窗
+export function makeShopFacade() {
+  const W = 256, H = 128, cols = 6, rows = 3;
+  const [c, g] = canvas(W, H);
+  const rnd = rand(302);
+  g.fillStyle = '#c4beb4';
+  g.fillRect(0, 0, W, H);
+  const cw = W / cols;
+  // 底商大玻璃 + 遮阳篷
+  for (let col = 0; col < cols; col++) {
+    const x = col * cw;
+    g.fillStyle = rnd() < 0.5 ? '#4e6a7e' : '#5d7a8e';
+    g.fillRect(x + 3, H * 0.42, cw - 6, H * 0.5);
+    g.fillStyle = 'rgba(255,255,255,0.25)';
+    g.fillRect(x + 3, H * 0.42, cw - 6, H * 0.14);
+    // 遮阳篷
+    g.fillStyle = ['#a8552f', '#3f6f52', '#7a4f8f', '#b0782f'][col % 4];
+    g.fillRect(x + 1, H * 0.34, cw - 2, H * 0.08);
+  }
+  // 上部楼层小窗
+  for (let r = 0; r < rows - 1; r++) {
+    const y = H * 0.06 + r * H * 0.12;
+    for (let col = 0; col < cols; col++) {
+      const x = col * cw;
+      g.fillStyle = rnd() < 0.3 ? '#cdd8de' : '#54687a';
+      g.fillRect(x + cw * 0.22, y, cw * 0.5, H * 0.08);
     }
   }
   return toTex(c);
@@ -313,6 +399,46 @@ export function makeWater() {
     g.lineWidth = 1 + rnd() * 1.6;
     const x = rnd() * S, y = rnd() * S, l = 10 + rnd() * 40;
     g.beginPath(); g.moveTo(x, y); g.lineTo(x + l, y + (rnd() - 0.5) * 4); g.stroke();
+  }
+  return toTex(c);
+}
+
+// ---------- 城市街区地坪（街道网格） ----------
+export function makeCityGround() {
+  const S = 2048;
+  const [c, g] = canvas(S, S);
+  const rnd = rand(606);
+  g.fillStyle = '#7c9c63';
+  g.fillRect(0, 0, S, S);
+  // 街区草地噪声
+  for (let i = 0; i < 26000; i++) {
+    const v = 100 + rnd() * 50;
+    g.fillStyle = `rgba(${v - 20},${v + 8},${v - 34},0.25)`;
+    g.fillRect(rnd() * S, rnd() * S, 2 + rnd() * 4, 2 + rnd() * 4);
+  }
+  // 部分街区内部做硬化场地
+  const cell = 24.5; // 4600m / 55m ≈ 84 格 → 每格约 24.5px
+  for (let gy = 0; gy < S / cell; gy++) {
+    for (let gx = 0; gx < S / cell; gx++) {
+      if (rnd() < 0.22) {
+        g.fillStyle = `rgba(168,172,168,${0.25 + rnd() * 0.3})`;
+        g.fillRect(gx * cell + 7, gy * cell + 7, cell - 14, cell - 14);
+      }
+    }
+  }
+  // 街道网格
+  g.fillStyle = '#b2b6ba';
+  for (let i = 0; i <= S / cell; i++) {
+    g.fillRect(i * cell - 3.2, 0, 6.4, S);
+    g.fillRect(0, i * cell - 3.2, S, 6.4);
+  }
+  // 街道中线
+  g.strokeStyle = 'rgba(230,232,234,0.75)';
+  g.lineWidth = 0.8;
+  g.setLineDash([5, 5]);
+  for (let i = 0; i <= S / cell; i++) {
+    g.beginPath(); g.moveTo(i * cell, 0); g.lineTo(i * cell, S); g.stroke();
+    g.beginPath(); g.moveTo(0, i * cell); g.lineTo(S, i * cell); g.stroke();
   }
   return toTex(c);
 }

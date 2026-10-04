@@ -78,6 +78,23 @@ export function lineRoad(p0, p1, step = 6) {
   return pts;
 }
 
+// 落地延伸段：沿末端切向先平滑降到地面，再贴地延伸一段（消灭"断头高架桥"）
+export function descentTail(pts, dropLen = 460, runLen = 420, yGround = 0.4) {
+  const n0 = pts.length;
+  const d = pts[n0 - 1].clone().sub(pts[n0 - 8]).setY(0).normalize();
+  const y0 = pts[n0 - 1].y;
+  const nDrop = Math.max(8, Math.round(dropLen / 6));
+  for (let i = 1; i <= nDrop; i++) {
+    const t = i / nDrop;
+    const e = smooth01(t);
+    pts.push(pts[n0 - 1].clone().addScaledVector(d, dropLen * t).setY(y0 + (yGround - y0) * e));
+  }
+  const last = pts[pts.length - 1];
+  const nRun = Math.max(4, Math.round(runLen / 8));
+  for (let i = 1; i <= nRun; i++) pts.push(last.clone().addScaledVector(d, runLen * i / nRun).setY(yGround));
+  return pts;
+}
+
 export function bezierRoad(p0, p1, p2, p3, step = 5) {
   const pts = [];
   const approxLen = p0.distanceTo(p3) * 1.3;
@@ -137,7 +154,10 @@ export function loopRamp(name, fromRoad, sExit, turn, r, sweepDeg, toRoad) {
   const arcEnd = arc.anchorAt(arc.length);
   const sMerge = toRoad.nearestS(arcEnd.p.x, arcEnd.p.z);
   const aMerge = toRoad.anchorAt(sMerge);
-  return joinRoads(name, arc, aMerge, { ext1: 45 });
+  const road = joinRoads(name, arc, aMerge, { ext1: 45 });
+  road.exit = { road: fromRoad, s: sExit };      // 驾驶系统：从 fromRoad 的 s 处进入本匝道
+  road.merge = { road: toRoad, s: sMerge };      // 驾驶系统：本匝道末端并入 toRoad 的 s 处
+  return road;
 }
 
 // 把 roadA 末端与锚点 a1 用短贝塞尔连成一条匝道
@@ -158,19 +178,21 @@ export function spiralRamp(name, center, rOuter, rInner, a0, turns, turn, y0, y1
 export function buildNetwork() {
   const mains = [], ramps = [], grounds = [];
 
+  // ===== 主线（两端落地延伸，接入城市路网，不再是断头高架）=====
   // 主线 A：东西向高架（层2）
   mains.push(new Road('主线A·东西', 'main', 'A', { carriageways: 'dual', lanes: 3, median: 3 },
-    lineRoad(V3(-1050, LEVELS.A, -60), V3(1050, LEVELS.A, -60))));
+    descentTail(lineRoad(V3(-1050, LEVELS.A, -60), V3(1050, LEVELS.A, -60)))));
   // 主线 B：南北向高架（层3）
   mains.push(new Road('主线B·南北', 'main', 'B', { carriageways: 'dual', lanes: 3, median: 3 },
-    lineRoad(V3(40, LEVELS.B, 1050), V3(40, LEVELS.B, -1050))));
+    descentTail(lineRoad(V3(40, LEVELS.B, 1050), V3(40, LEVELS.B, -1050)))));
   // 主线 C：西北—东南 对角主线（层4，带缓曲）
   {
     const bez = bezierRoad(V3(-440, LEVELS.C, -330), V3(-150, LEVELS.C, -80), V3(140, LEVELS.C, 60), V3(440, LEVELS.C, 330));
     const end = bez[bez.length - 1];
     const d = bez[bez.length - 1].clone().sub(bez[bez.length - 6]).setY(0).normalize();
     const ext = lineRoad(end, end.clone().addScaledVector(d, 700));
-    mains.push(new Road('主线C·西北东南', 'main', 'C', { carriageways: 'dual', lanes: 3, median: 3 }, bez.concat(ext.slice(1))));
+    mains.push(new Road('主线C·西北东南', 'main', 'C', { carriageways: 'dual', lanes: 3, median: 3 },
+      descentTail(bez.concat(ext.slice(1)))));
   }
   // 主线 D：西南—东北 对角主线（层5 最高）
   {
@@ -178,17 +200,18 @@ export function buildNetwork() {
     const end = bez[bez.length - 1];
     const d = bez[bez.length - 6].clone().sub(bez[bez.length - 1]).setY(0).normalize().negate();
     const ext = lineRoad(end, end.clone().addScaledVector(d, 700));
-    mains.push(new Road('主线D·西南东北', 'main', 'D', { carriageways: 'dual', lanes: 3, median: 3 }, bez.concat(ext.slice(1))));
+    mains.push(new Road('主线D·西南东北', 'main', 'D', { carriageways: 'dual', lanes: 3, median: 3 },
+      descentTail(bez.concat(ext.slice(1)))));
   }
   const A = mains[0], B = mains[1], C = mains[2], D = mains[3];
 
-  // 地面道路（层1）
+  // 地面道路（层1，延伸进城市深处）
   grounds.push(new Road('地面·滨江路', 'ground', 'G', { carriageways: 'dual', lanes: 3, median: 2.4, width: 13 },
-    lineRoad(V3(-1050, LEVELS.G, 90), V3(1050, LEVELS.G, 90))));
+    lineRoad(V3(-2300, LEVELS.G, 90), V3(2300, LEVELS.G, 90))));
   grounds.push(new Road('地面·林荫大道', 'ground', 'G', { carriageways: 'dual', lanes: 3, median: 2.4, width: 13 },
-    lineRoad(V3(-90, LEVELS.G, 1050), V3(-90, LEVELS.G, -1050))));
+    lineRoad(V3(-90, LEVELS.G, 2300), V3(-90, LEVELS.G, -2300))));
   grounds.push(new Road('地面·北横路', 'ground', 'G', { carriageways: 'dual', lanes: 2, median: 2, width: 11 },
-    lineRoad(V3(-1050, LEVELS.G, -280), V3(1050, LEVELS.G, -280))));
+    lineRoad(V3(-2300, LEVELS.G, -280), V3(2300, LEVELS.G, -280))));
   const G1 = grounds[0], G2 = grounds[1], G3 = grounds[2];
 
   // ===== 20 条匝道 =====
@@ -205,18 +228,32 @@ export function buildNetwork() {
   ramps.push(loopRamp('匝道R8·B南转C', B, B.nearestS(40, 190), -1, 52, 262, C));      // 18→27 上
 
   // -- C×D 定向半直接匝道（4 条，大 S 曲线）--
-  ramps.push(rampFromAnchors('匝道R9·D转C', D.anchorAt(D.nearestS(150, -110)), C.anchorAt(C.nearestS(260, 175)), { ext0: 110, ext1: 110 }));
-  ramps.push(rampFromAnchors('匝道R10·C转D', C.anchorAt(C.nearestS(-120, -55)), D.anchorAt(D.nearestS(-230, 160)), { ext0: 110, ext1: 110 }));
-  ramps.push(rampFromAnchors('匝道R11·D转C', D.anchorAt(D.nearestS(-180, 130)), C.anchorAt(C.nearestS(-300, -160)), { ext0: 110, ext1: 110 }));
-  ramps.push(rampFromAnchors('匝道R12·C转D', C.anchorAt(C.nearestS(60, 120)), D.anchorAt(D.nearestS(180, -140)), { ext0: 110, ext1: 110 }));
+  const direct = (name, fromRoad, s0, toRoad, s1, ext = 110) => {
+    const r = rampFromAnchors(name, fromRoad.anchorAt(s0), toRoad.anchorAt(s1), { ext0: ext, ext1: ext });
+    r.exit = { road: fromRoad, s: s0 };
+    r.merge = { road: toRoad, s: s1 };
+    ramps.push(r);
+    return r;
+  };
+  direct('匝道R9·D转C', D, D.nearestS(150, -110), C, C.nearestS(260, 175));
+  direct('匝道R10·C转D', C, C.nearestS(-120, -55), D, D.nearestS(-230, 160));
+  direct('匝道R11·D转C', D, D.nearestS(-180, 130), C, C.nearestS(-300, -160));
+  direct('匝道R12·C转D', C, C.nearestS(60, 120), D, D.nearestS(180, -140));
 
   // -- 落地匝道（主线 ⇄ 地面路，塑造 8 方向）--
-  ramps.push(rampFromAnchors('匝道R13·A西落地', A.anchorAt(A.nearestS(-560, -60)), G3.anchorAt(G3.nearestS(-560, -280)), { ext0: 80, ext1: 130 }));
-  ramps.push(rampFromAnchors('匝道R14·A东落地', A.anchorAt(A.nearestS(500, -60)), G1.anchorAt(G1.nearestS(500, 90)), { ext0: 80, ext1: 130 }));
-  ramps.push(rampFromAnchors('匝道R15·C东南落地', C.anchorAt(C.nearestS(600, 480)), G1.anchorAt(G1.nearestS(560, 90)), { ext0: 110, ext1: 140 }));
-  ramps.push(rampFromAnchors('匝道R16·B北落地', B.anchorAt(B.nearestS(40, 560)), G2.anchorAt(G2.nearestS(-90, 560)), { ext0: 80, ext1: 110 }));
-  ramps.push(rampFromAnchors('匝道R20·B南落地', B.anchorAt(B.nearestS(40, 300)), G1.anchorAt(G1.nearestS(120, 90)), { ext0: 90, ext1: 130 }));
-  ramps.push(rampFromAnchors('匝道R21·D东北落地', D.anchorAt(D.nearestS(600, -500)), G3.anchorAt(G3.nearestS(560, -280)), { ext0: 110, ext1: 120 }));
+  const land = (name, fromRoad, s0, toRoad, s1, ext0 = 80, ext1 = 130) => {
+    const r = rampFromAnchors(name, fromRoad.anchorAt(s0), toRoad.anchorAt(s1), { ext0, ext1 });
+    r.exit = { road: fromRoad, s: s0 };
+    r.merge = { road: toRoad, s: s1 };
+    ramps.push(r);
+    return r;
+  };
+  land('匝道R13·A西落地', A, A.nearestS(-560, -60), G3, G3.nearestS(-560, -280));
+  land('匝道R14·A东落地', A, A.nearestS(500, -60), G1, G1.nearestS(500, 90));
+  land('匝道R15·C东南落地', C, C.nearestS(600, 480), G1, G1.nearestS(560, 90), 110, 140);
+  land('匝道R16·B北落地', B, B.nearestS(40, 560), G2, G2.nearestS(-90, 560), 80, 110);
+  land('匝道R20·B南落地', B, B.nearestS(40, 300), G1, G1.nearestS(120, 90), 90, 130);
+  land('匝道R21·D东北落地', D, D.nearestS(600, -500), G3, G3.nearestS(560, -280), 110, 120);
 
   // -- 两条螺旋匝道（地标性）--
   // SP1：东南象限，地面 G1 → 层4 主线C，顺时针爬升 1.6 圈
@@ -238,6 +275,8 @@ export function buildNetwork() {
     const full = joinRoads('匝道SP1·螺旋上行', arc, aC, { ext1: 50 });
     const road = new Road('匝道SP1·螺旋上行', 'ramp', null, { carriageways: 'single', lanes: 2 },
       leadPts.concat(arc.pts.slice(1), full.pts.slice(arc.pts.length)));
+    road.exit = { road: G1, s: sG };
+    road.merge = { road: C, s: sC };
     ramps.push(road);
   }
   // SP2：西北象限，层4 主线C → 地面 G2，逆时针下降 1.5 圈
@@ -255,6 +294,8 @@ export function buildNetwork() {
     const full = joinRoads('匝道SP2·螺旋下行', arc, aG, { ext1: 60 });
     const road = new Road('匝道SP2·螺旋下行', 'ramp', null, { carriageways: 'single', lanes: 2 },
       lead.pts.concat(arc.pts.slice(1), full.pts.slice(arc.pts.length)));
+    road.exit = { road: C, s: sC };
+    road.merge = { road: G2, s: sG };
     ramps.push(road);
   }
 

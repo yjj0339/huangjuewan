@@ -1,7 +1,8 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
 import * as THREE from '../vendor/three.module.js';
 import {
-  makeAsphalt, makeConcrete, makeGrass, makeFacade,
+  makeAsphalt, makeConcrete, makeGrass,
+  makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
 } from './textures.js';
 import { buildNetwork, buildCollisionGrid, LEVELS } from './roads.js';
@@ -10,7 +11,7 @@ import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark,
 } from './props.js';
-import { Traffic } from './traffic.js';
+import { Traffic, PlayerCar } from './traffic.js';
 import { makeSky, makeLighting, makeClouds, makeOuterGround } from './env.js';
 
 // ---------- 渲染器 ----------
@@ -38,7 +39,10 @@ const asphaltG2 = makeAsphalt(2, { roadW: 11 });
 const concreteTex = makeConcrete();
 const grassTex = makeGrass();
 const parkTex = makeGrass();
-const facadeTex = makeFacade(true);
+const texResi = makeResiFacade();
+const texGlass = makeGlassFacade();
+const texShop = makeShopFacade();
+const texCityGround = makeCityGround();
 const waterTex = makeWater();
 
 const asphaltMat = new THREE.MeshStandardMaterial({ map: asphalt3.tex, roughness: 0.94, metalness: 0 });
@@ -94,14 +98,14 @@ scene.add(makeSigns(net, signMats));
 // ---------- 绿化 + 城市 ----------
 // 近地匝道段样本（扁平 [x,z,...]），供植被避让
 const lowSamples = [];
-for (const road of net.ramps) {
+for (const road of [...net.ramps, ...net.mains]) {
   for (let s = 0; s <= road.length; s += 8) {
     const p = road.pts[road._seg(s)];
     if (p.y < 3.2) { lowSamples.push(p.x, p.z); }
   }
 }
 scene.add(makeVegetation(piers.placed, [...net.grounds], lowSamples));
-scene.add(makeCity(facadeTex, net));
+scene.add(makeCity(net, texResi, texGlass, texShop, texCityGround));
 
 // ---------- 天空/光/云 ----------
 scene.add(makeSky());
@@ -112,6 +116,10 @@ scene.add(clouds);
 // ---------- 车流 ----------
 const traffic = new Traffic(net, 1);
 scene.add(traffic.group);
+
+// ---------- 玩家驾驶车 ----------
+const player = new PlayerCar(net);
+scene.add(player.mesh);
 
 // ---------- 轨道控制（自制，带阻尼） ----------
 const ctl = {
@@ -153,6 +161,103 @@ dom.addEventListener('wheel', (e) => {
   ctl.auto = false;
 }, { passive: false });
 
+// ---------- 模式系统：环视 / 跟随车辆 / 自由驾驶 ----------
+let mode = 'orbit';          // 'orbit' | 'follow' | 'drive'
+let followCar = null;
+const input = { up: false, down: false, turn: 0 };
+const raycaster = new THREE.Raycaster();
+const hud = document.getElementById('drive-hud');
+const hudSpeed = document.getElementById('hud-speed');
+const hudRoad = document.getElementById('hud-road');
+const hudHint = document.getElementById('hud-hint');
+const touchPad = document.getElementById('touch-controls');
+
+function setMode(m) {
+  mode = m;
+  if (m === 'drive') {
+    player.mesh.visible = true;
+    player.spawn(net.mains[0]);
+    followCar = null;
+    ctl.auto = false;
+  } else if (m !== 'follow') {
+    player.mesh.visible = false;
+    followCar = null;
+    camera.fov = 52;
+    camera.updateProjectionMatrix();
+  }
+  touchPad.style.display = m === 'drive' ? 'flex' : 'none';
+  hud.style.display = (m === 'drive' || m === 'follow') ? 'block' : 'none';
+  document.getElementById('drive').classList.toggle('on', m === 'drive');
+  document.getElementById('spin').style.visibility = m === 'orbit' ? 'visible' : 'hidden';
+}
+function exitToOrbit() {
+  setMode('orbit');
+  applyPreset('bird');
+}
+
+function handleClick(e) {
+  if (e.target !== dom) return; // 只响应画布点击（UI 按钮不触发）
+  const ndc = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObjects(traffic.insts, false);
+  if (hits.length) {
+    const inst = hits[0].object;
+    const car = inst.userData.cars[hits[0].instanceId];
+    if (car) {
+      followCar = car;
+      setMode('follow');
+      hudHint.textContent = '跟随视角：' + car.road.name + ' · 点击空白处或按 ESC 退出';
+    }
+  } else if (mode === 'follow') {
+    exitToOrbit();
+  }
+}
+
+// 点击（与拖拽区分）
+let downX = 0, downY = 0;
+dom.addEventListener('pointerdown', (e) => { downX = e.clientX; downY = e.clientY; });
+addEventListener('pointerup', (e) => {
+  if (Math.hypot(e.clientX - downX, e.clientY - downY) < 6) handleClick(e);
+});
+
+// 键盘
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { if (mode !== 'orbit') exitToOrbit(); return; }
+  if (mode !== 'drive') return;
+  const k = e.key.toLowerCase();
+  if (k === 'w' || k === 'arrowup') input.up = true;
+  if (k === 's' || k === 'arrowdown') input.down = true;
+  if (k === 'a' || k === 'arrowleft') input.turn = -1;
+  if (k === 'd' || k === 'arrowright') input.turn = 1;
+});
+addEventListener('keyup', (e) => {
+  const k = e.key.toLowerCase();
+  if (k === 'w' || k === 'arrowup') input.up = false;
+  if (k === 's' || k === 'arrowdown') input.down = false;
+});
+
+// 触屏驾驶按钮
+const bindTouch = (id, on, off) => {
+  const el = document.getElementById(id);
+  el.addEventListener('pointerdown', (ev) => { ev.preventDefault(); ev.stopPropagation(); on(); });
+  el.addEventListener('pointerup', (ev) => { ev.stopPropagation(); off(); });
+  el.addEventListener('pointerleave', () => off());
+};
+bindTouch('tc-left', () => { input.turn = -1; }, () => {});
+bindTouch('tc-right', () => { input.turn = 1; }, () => {});
+bindTouch('tc-gas', () => { input.up = true; }, () => { input.up = false; });
+bindTouch('tc-brake', () => { input.down = true; }, () => { input.down = false; });
+
+document.getElementById('drive').addEventListener('click', () => {
+  setMode(mode === 'drive' ? 'orbit' : 'drive');
+});
+const followBtn = document.getElementById('followRandom');
+followBtn.addEventListener('click', () => {
+  followCar = traffic.cars[(Math.random() * traffic.cars.length) | 0];
+  setMode('follow');
+  hudHint.textContent = '跟随视角：' + followCar.road.name + ' · 点击空白处或按 ESC 退出';
+});
+
 // ---------- 镜头预设 ----------
 const PRESETS = {
   bird: { pos: [620, 470, 620], tgt: [0, 12, 0], phi: null },           // 鸟瞰全貌
@@ -161,6 +266,7 @@ const PRESETS = {
   spiral: { pos: [455, 210, 430], tgt: [262, 8, 160] },                 // 螺旋匝道（高角度俯瞰盘桥）
   street: { pos: [40, 22, -180], tgt: [40, 17, 100] },                  // 主线穿行视角
   tower: { pos: [120, 90, -280], tgt: [40, 20, -60] },
+  west: { pos: [-1520, 130, 340], tgt: [-900, 12, -60] },               // 西端落地段
 };
 let presetName = 'bird';
 function applyPreset(name, instant = true) {
@@ -197,27 +303,65 @@ if (params.get('shot')) {
   applyPreset(params.get('shot'));
   ctl.auto = false;
 }
+if (params.get('drive')) setMode('drive');
+if (params.get('follow')) {
+  followCar = traffic.cars[(Math.random() * traffic.cars.length) | 0];
+  setMode('follow');
+}
 
 // ---------- 主循环 ----------
 const clock = new THREE.Clock();
+const UPV = new THREE.Vector3(0, 1, 0);
+const chaseTarget = new THREE.Vector3(), lookPos = new THREE.Vector3();
+const focus = new THREE.Vector3(0, 12, 0);
 let frames = 0, fpsAcc = 0, readyFrames = 0;
+function chaseCam(targetPos, fwd, dist, height, lookAhead, dt, speed = 0) {
+  chaseTarget.copy(targetPos).addScaledVector(fwd, -dist).addScaledVector(UPV, height);
+  camera.position.lerp(chaseTarget, 1 - Math.exp(-5.5 * dt));
+  lookPos.copy(targetPos).addScaledVector(fwd, lookAhead);
+  lookPos.y += 1.4;
+  camera.lookAt(lookPos);
+  const targetFov = 52 + Math.min(26, speed * 0.5);
+  if (Math.abs(camera.fov - targetFov) > 0.3) {
+    camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 3);
+    camera.updateProjectionMatrix();
+  }
+}
 function tick() {
   requestAnimationFrame(tick);
   const dt = Math.min(clock.getDelta(), 0.05);
-  // 控制器阻尼
-  if (ctl.auto) ctl.vSph.theta += dt * 0.028;
-  ctl.sph.theta += ctl.vSph.theta; ctl.sph.phi += ctl.vSph.phi;
-  ctl.vSph.theta *= 0.86; ctl.vSph.phi *= 0.86;
-  ctl.sph.phi = THREE.MathUtils.clamp(ctl.sph.phi, 0.06, Math.PI / 2 - 0.02);
-  camera.position.setFromSpherical(ctl.sph).add(ctl.target);
-  camera.lookAt(ctl.target);
+  if (mode === 'orbit') {
+    // 轨道相机（带阻尼）
+    if (ctl.auto) ctl.vSph.theta += dt * 0.028;
+    ctl.sph.theta += ctl.vSph.theta; ctl.sph.phi += ctl.vSph.phi;
+    ctl.vSph.theta *= 0.86; ctl.vSph.phi *= 0.86;
+    ctl.sph.phi = THREE.MathUtils.clamp(ctl.sph.phi, 0.06, Math.PI / 2 - 0.02);
+    camera.position.setFromSpherical(ctl.sph).add(ctl.target);
+    camera.lookAt(ctl.target);
+    focus.copy(ctl.target);
+  } else if (mode === 'follow' && followCar) {
+    const f = followCar.road.frameAt(followCar.s);
+    const pos = f.p.clone().addScaledVector(f.side, followCar.laneOff);
+    const fwd = f.tan.clone().multiplyScalar(followCar.forward);
+    chaseCam(pos, fwd, 8.5, 3.3, 9, dt, followCar.speed * followCar.forward);
+    focus.copy(pos);
+    hudSpeed.textContent = Math.round(Math.abs(followCar.speed) * 3.6);
+    hudRoad.textContent = followCar.road.name;
+  } else if (mode === 'drive') {
+    const st = player.update(dt, input);
+    chaseCam(st.pos, st.fwd, 8.2 + st.speed * 0.05, 3.4, 12, dt, st.speed);
+    focus.copy(st.pos);
+    hudSpeed.textContent = Math.round(st.speed * 3.6);
+    hudRoad.textContent = player.road.name;
+    hudHint.textContent = player.hint || 'W/↑ 油门 · S/↓ 刹车 · A/D 变道（出口提示出现时按 ←/→ 转入匝道）· ESC 退出';
+  }
 
   traffic.update(dt * (params.get('speed') ? parseFloat(params.get('speed')) : 1));
   clouds.userData.tick(dt);
 
   // 太阳阴影相机跟随视野中心
-  sun.target.position.copy(ctl.target);
-  sun.position.copy(ctl.target).add(new THREE.Vector3(420, 560, 300));
+  sun.target.position.copy(focus);
+  sun.position.copy(focus).add(new THREE.Vector3(420, 560, 300));
 
   renderer.render(scene, camera);
 
