@@ -70,7 +70,7 @@ export function makeClouds(cloudTex, shadowNoise) {
   shadowTex.repeat.set(1, 1);
   const shadowMat = new THREE.MeshBasicMaterial({
     map: shadowTex, blending: THREE.MultiplyBlending, transparent: true,
-    opacity: 0.42, depthWrite: false, fog: false,
+    opacity: 0.34, depthWrite: false, fog: false,
   });
   const shadowPlane = new THREE.Mesh(new THREE.CircleGeometry(1500, 48), shadowMat);
   shadowPlane.rotation.x = -Math.PI / 2;

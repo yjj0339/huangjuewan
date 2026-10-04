@@ -459,9 +459,11 @@ function tick() {
     chaseCam(st.pos, st.fwd, 8.2 + st.speed * 0.05, 3.4, 12, dt, st.speed);
     focus.copy(st.pos);
     engineSound(st.speed);
-    hudSpeed.textContent = Math.round(st.speed * 3.6);
-    hudRoad.textContent = player.road.name;
-    hudHint.textContent = player.hint || 'W/↑ 油门 · S/↓ 刹车 · A/D 变道（出口提示出现时按 ←/→ 转入匝道）· ESC 退出';
+    if (!params.get('camdbg')) {
+      hudSpeed.textContent = Math.round(st.speed * 3.6);
+      hudRoad.textContent = player.road.name;
+      hudHint.textContent = player.hint || 'W/↑ 油门 · S/↓ 刹车 · A/D 变道（出口提示出现时按 ←/→ 转入匝道）· ESC 退出';
+    }
   }
 
   traffic.update(dt * (params.get('speed') ? parseFloat(params.get('speed')) : 1));
@@ -479,9 +481,9 @@ function tick() {
       window.__DIAG.tris = renderer.info.render.triangles;
       window.__DIAG.calls = renderer.info.render.calls;
       if (params.get('camdbg') && mode === 'drive') {
-        const p = player.mesh.position;
-        document.body.setAttribute('data-dbg',
-          `car=${p.x.toFixed(1)},${p.y.toFixed(1)},${p.z.toFixed(1)} cam=${camera.position.x.toFixed(1)},${camera.position.y.toFixed(1)},${camera.position.z.toFixed(1)} s=${player.s.toFixed(0)}/${player.road.length.toFixed(0)}`);
+        const wrap = document.getElementById('tc-gas').parentElement;
+        const wr = wrap.getBoundingClientRect();
+        hudRoad.textContent = `wrap w=${wr.width.toFixed(0)} x=${wr.x.toFixed(0)} vw=${innerWidth} dpr=${devicePixelRatio}`;
       }
       window.__READY = true;
       document.title = 'READY';
