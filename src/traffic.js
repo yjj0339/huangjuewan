@@ -1,8 +1,8 @@
 // 车流 + 玩家驾驶车：Blender GLB 精细车辆（按材质拆分实例化），
 // AI 车流在匝道/主线/地面路之间自动转接，全程连续不凭空消失。
-import * as THREE from '../vendor/three.module.js?v=41';
-import { mergeGeoms } from './deck.js?v=41';
-import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=41';
+import * as THREE from '../vendor/three.module.js?v=42';
+import { mergeGeoms } from './deck.js?v=42';
+import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=42';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const KINDS = ['sedan', 'suv', 'bus', 'truck'];
@@ -455,18 +455,18 @@ export class PlayerCar {
     this.mesh.position.copy(this.pos);
     this.mesh.rotation.y = this.heading;
   }
-  // 切换线路：按当前位置在新路上重投影（位置/朝向零跳变）
-  switchRoad(r, s) {
+  // 切换线路：按当前位置在新路上重投影（位置零跳变；航向保持）
+  switchRoad(r) {
     const oldPos = this.pos.clone();
     const oldH = this.heading;
     this.road = r;
     this.s = clamp(r.nearestS(oldPos.x, oldPos.z), 1, r.length - 1);
-    if (s !== undefined) this.s = clamp(s, 1, r.length - 1);
     const f = this.road.frameAt(this.s);
     const lat = oldPos.clone().sub(f.p).dot(f.side);
     const [uMin, uMax] = this.uRange(this.road);
     this.laneOff = clamp(lat, uMin, uMax);
     this.heading = oldH; // 航向保持（分流/汇合口切向本就吻合）
+    this._pu = this.laneOff;
     this.syncFromRoad();
   }
   update(dt, input) {
@@ -503,26 +503,28 @@ export class PlayerCar {
     let taking = null;
     this.hint = '';
     for (const ex of (this.exitsByRoad.get(road) || [])) {
-      if (this.s > ex.s - 130 && this.s < ex.s + 14) {
+      if (this.s > ex.s - 130 && this.s < ex.s + 24) {
         const edgeU = ex.side > 0 ? uMax : uMin;
         const nearEdge = Math.abs(this.laneOff - edgeU) < 4.0;
         const dist = Math.max(0, Math.round(ex.s - this.s));
         this.hint = dist > 0
           ? `前方${dist}m ${ex.side > 0 ? '右' : '左'}侧出口：向${ex.side > 0 ? '右' : '左'}转向驶入 ${ex.ramp.name}`
           : `已到出口：保持向${ex.side > 0 ? '右' : '左'}转向驶入 ${ex.ramp.name}`;
-        if (nearEdge && steer === ex.side && this.speed > 3) { taking = ex; break; }
+        if (nearEdge && Math.sign(steer) === ex.side && Math.abs(steer) > 0.2 && this.speed > 3) { taking = ex; break; }
       }
     }
     if (taking) {
-      this.switchRoad(taking.ramp, 8);
       this.hint = '已驶入 ' + taking.ramp.name;
+      this.switchRoad(taking.ramp);
     }
     // 线路末端：匝道→主线 / 主线→城市干道，按当前位置重投影（连续）
-    if (!taking && this.s >= road.length - 0.5) {
+    // 触发线放宽到 length−6.5：nearestS 有 6m 量化，贴末端判定会永远差几米卡死
+    if (!taking && this.s >= road.length - 9.5) {
       if (road.merge) {
-        this.switchRoad(road.merge.road, road.merge.s + 2);
+        this.switchRoad(road.merge.road);
       } else {
         this.s = 2; // 干道尽头兜底环回（远在雾中）
+        this.syncFromRoad();
       }
     }
     // 与 AI 车碰撞避让：前方同向近车限制速度并保持间距（不再互相穿透）
@@ -546,6 +548,45 @@ export class PlayerCar {
     const fwd = V3(Math.sin(this.heading + yawVis * 0.12), 0, Math.cos(this.heading + yawVis * 0.12));
     this.mesh.position.copy(this.pos);
     this.mesh.rotation.y = this.heading + yawVis * 0.14;
+    return { pos: this.pos.clone(), fwd, speed: this.speed };
+  }
+  // 自动巡航（轨道伺服）：沿当前道路行驶，出口/末端自动转接，绝对不出路面
+  autoCruise(dt) {
+    const road = this.road;
+    const limit = road.kind === 'main' ? 30 : road.kind === 'ramp' ? 16.5 : 14;
+    // 跟车
+    if (this.traffic) {
+      for (const c of (this.traffic.byRoad.get(road) || [])) {
+        if (c.forward !== 1) continue;
+        const gap = c.s - this.s;
+        if (gap > 0 && gap < 12 + this.speed * 0.6) this.speed = Math.min(this.speed, c.speed);
+      }
+    }
+    this.speed = Math.min(this.speed + 9 * dt, limit);
+    this.s = clamp(this.s + this.speed * dt, 0.5, road.length - 0.3);
+    // 出口：贴外缘滑到分流口即切上匝道（位置连续）
+    for (const ex of (this.exitsByRoad.get(road) || [])) {
+      const edgeU = ex.side > 0 ? road.width / 2 - 1.2 : -(road.width / 2 - 1.2);
+      if (Math.abs(this.laneOff - edgeU) < 3.4 && Math.abs(this.s - ex.s) < 10) {
+        this.switchRoad(ex.ramp);
+        this.laneOff = (ex.side > 0 ? 1 : -1) * (ex.ramp.width / 2 - 2.4);
+        this.laneTarget = this.laneOff;
+        break;
+      }
+    }
+    // 末端：匝道并入目标 / 无汇入则环回
+    if (road.merge && this.s >= road.length - 0.4) {
+      this.switchRoad(road.merge.road, road.merge.s + 2);
+    } else if (this.s >= road.length - 0.3) {
+      this.s = 2;
+    }
+    // 位姿
+    const f = road.frameAt(this.s);
+    this.pos.copy(f.p).addScaledVector(f.side, this.laneOff);
+    const fwd = f.tan.clone().multiplyScalar(1);
+    this.mesh.position.copy(this.pos);
+    this.mesh.rotation.y = Math.atan2(fwd.x, fwd.z);
+    this.mesh.quaternion.setFromUnitVectors(V3(0, 0, 1), fwd);
     return { pos: this.pos.clone(), fwd, speed: this.speed };
   }
 }

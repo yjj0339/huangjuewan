@@ -1,6 +1,6 @@
 // 程序化 PBR 纹理：沥青（含车道线/磨损/水渍）、混凝土（模板缝/污渍）、
 // 草地、建筑立面、交通标志、云与云影噪声。全部 Canvas 生成，零外部依赖。
-import * as THREE from '../vendor/three.module.js?v=41';
+import * as THREE from '../vendor/three.module.js?v=42';
 
 function canvas(w, h) {
   const c = document.createElement('canvas');

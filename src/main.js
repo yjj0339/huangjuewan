@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=41';
+import * as THREE from '../vendor/three.module.js?v=42';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=41';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=41';
-import { buildDeck, buildPiers } from './deck.js?v=41';
+} from './textures.js?v=42';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=42';
+import { buildDeck, buildPiers } from './deck.js?v=42';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
-} from './props.js?v=41';
-import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=41';
-import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=41';
+} from './props.js?v=42';
+import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=42';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=42';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -27,6 +27,7 @@ document.getElementById('app').appendChild(renderer.domElement);
 
 const params = new URLSearchParams(location.search); // 诊断/截图参数（全文件可用）
 const autoDrive = params.get('auto') === '1'; // 自动驾驶巡航（验证用）
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xc9d9e6, 1900, 6800);
@@ -634,18 +635,21 @@ function tickBody() {
     engineSound(followCar.speed * followCar.forward);
     hudTick(dt, followCar.speed, followCar.road.name, null);
   } else if (mode === 'drive') {
-    // 自动驾驶巡航：保持本侧幅居中，出口临近时向出口侧靠边并驶入
+    // 自动驾驶巡航：PD 循线（航向+横向双误差）+ 出口窗口内向外缘靠并打方向驶入
     if (autoDrive && player) {
       input.up = true;
       const [uMin, uMax] = player.uRange(player.road);
       let exitSide = 0;
       for (const ex of (player.exitsByRoad.get(player.road) || [])) {
-        if (player.s > ex.s - 110 && player.s < ex.s + 10) { exitSide = ex.side; break; }
+        if (player.s > ex.s - 140 && player.s < ex.s + 10) { exitSide = ex.side; break; }
       }
-      const want = exitSide > 0 ? uMax : exitSide < 0 ? uMin : (uMin + uMax) / 2;
-      const d = want - player.laneOff;
-      // 出口窗口内持续按住出口方向（保证贴边时仍满足"正在打方向"的驶入条件）
-      input.turn = exitSide !== 0 ? exitSide : (Math.abs(d) > 0.2 ? Math.sign(d) : 0);
+      const f = player.road.frameAt(player.s);
+      const tanA = Math.atan2(f.tan.x, f.tan.z);
+      const want = exitSide > 0 ? uMax - 0.8 : exitSide < 0 ? uMin + 0.8 : uMax - 1.6; // 常态巡行走外侧车道（内缘是分隔墙）
+      // 出口窗口内强制向外缘偏置（持续转向满足驶入条件）
+      const rel = exitSide !== 0 ? exitSide * 0.3 : clamp((want - player.laneOff) * 0.10, -0.32, 0.32);
+      const desiredH = tanA - rel; // rel>0 = 需向右 = 航向应减小
+      input.turn = clamp((player.heading - desiredH) * 2.6, -1, 1);
     }
     const st = player.update(dt, input);
     if (autoDrive && (frameNo % 40) === 0) {
