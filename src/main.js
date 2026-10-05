@@ -20,7 +20,6 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.shadowMap.autoUpdate = false; // 阴影隔帧刷新（减半阴影开销）
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.94;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -579,6 +578,14 @@ function chaseCam(targetPos, fwd, dist, height, lookAhead, dt, speed = 0) {
 }
 function tick() {
   requestAnimationFrame(tick);
+  try {
+    tickBody();
+  } catch (err) {
+    document.title = 'ERR: ' + err.message + ' | ' + (err.stack || '').split('\n')[1];
+    throw err;
+  }
+}
+function tickBody() {
   const dt = Math.min(clock.getDelta(), 0.05);
   perfProbe(dt);
   if (mode === 'orbit') {
@@ -639,7 +646,6 @@ function tick() {
   // 太阳阴影相机跟随视野中心
   sun.target.position.copy(focus);
   sun.position.copy(focus).add(new THREE.Vector3(420, 560, 300));
-  renderer.shadowMap.needsUpdate = (frameNo & 1) === 0; // 隔帧刷新阴影
 
   renderer.render(scene, camera);
 

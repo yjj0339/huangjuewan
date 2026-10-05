@@ -377,20 +377,23 @@ export class PlayerCar {
     this.speed = clamp(this.speed, 0, limit);
     this.s += this.speed * dt;
 
-    // 连续自由转向：左右键平滑改变横向位置（整幅路面任你开）
+    // 连续自由转向：左右键平滑改变横向位置（整幅路面任你开；转向速率随速度自适应）
     const [uMin, uMax] = this.uRange(road);
-    const steerRate = 5.2;
+    const steerRate = 3.6 + this.speed * 0.14;
     if (input.turn !== 0) {
       this.laneOff = clamp(this.laneOff + input.turn * steerRate * dt, uMin, uMax);
     }
-    // 出口：必须在出口窗口内、处于对应侧的外缘、且持续向该侧转向 → 平滑驶入匝道
+    // 出口：出口前 160m 开始提示；处于对应侧的外缘、且持续向该侧转向 → 平滑驶入匝道
     let taking = null;
     this.hint = '';
     for (const ex of (this.exitsByRoad.get(road) || [])) {
-      if (this.s > ex.s - 48 && this.s < ex.s + 14) {
+      if (this.s > ex.s - 130 && this.s < ex.s + 14) {
         const edgeU = ex.side > 0 ? uMax : uMin;
         const nearEdge = Math.abs(this.laneOff - edgeU) < 4.2;
-        this.hint = `前方${ex.side > 0 ? '右' : '左'}侧出口：向${ex.side > 0 ? '右' : '左'}靠边驶入 ${ex.ramp.name}`;
+        const dist = Math.round(ex.s - this.s);
+        this.hint = dist > 0
+          ? `前方${dist}m ${ex.side > 0 ? '右' : '左'}侧出口：向${ex.side > 0 ? '右' : '左'}靠边驶入 ${ex.ramp.name}`
+          : `已到出口：保持向${ex.side > 0 ? '右' : '左'}转向驶入 ${ex.ramp.name}`;
         if (nearEdge && input.turn === ex.side && this.speed > 3) { taking = ex; break; }
       }
     }

@@ -262,7 +262,7 @@ export function makeVegetation(pierPositions, groundRoads, treeClear, bushClear)
     placedShrub++;
   }
   shrubs.count = placedShrub;
-  shrubs.castShadow = true;
+  shrubs.castShadow = false; // 1400 株灌木投影是阴影渲染大头，收益小
   shrubs.receiveShadow = true;
   group.add(shrubs);
 
@@ -290,7 +290,7 @@ export function makeVegetation(pierPositions, groundRoads, treeClear, bushClear)
     tCount++;
   }
   trees.count = tCount;
-  trees.castShadow = true;
+  trees.castShadow = false; // 620 棵树投影开销大（树影在桥面上意义小）
   group.add(trees);
   return group;
 }
