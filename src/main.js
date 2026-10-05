@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=38';
+import * as THREE from '../vendor/three.module.js?v=39';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=38';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=38';
-import { buildDeck, buildPiers } from './deck.js?v=38';
+} from './textures.js?v=39';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=39';
+import { buildDeck, buildPiers } from './deck.js?v=39';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
-} from './props.js?v=38';
-import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=38';
-import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=38';
+} from './props.js?v=39';
+import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=39';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=39';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -73,6 +73,23 @@ if (params.get('audit')) {
   const conf = auditClearances(net);
   document.body.setAttribute('data-audit', JSON.stringify({ n: conf.length, items: conf.slice(0, 24) }));
   document.title = 'AUDIT' + conf.length;
+}
+// 连接点导出：所有匝道的分支/汇合世界坐标（供逐一目验）
+if (params.get('conn')) {
+  const pts = [];
+  for (const r of net.ramps) {
+    const f = r.frameAt(3);
+    pts.push({ t: '分', n: r.name, x: +f.p.x.toFixed(0), z: +f.p.z.toFixed(0) });
+    const e = r.frameAt(r.length - 3);
+    pts.push({ t: '合', n: r.name, x: +e.p.x.toFixed(0), z: +e.p.z.toFixed(0) });
+  }
+  for (const m of net.mains) {
+    const h = m.frameAt(6);
+    pts.push({ t: '头', n: m.name, x: +h.p.x.toFixed(0), z: +h.p.z.toFixed(0) });
+    const tl = m.frameAt(m.length - 6);
+    pts.push({ t: '尾', n: m.name, x: +tl.p.x.toFixed(0), z: +tl.p.z.toFixed(0) });
+  }
+  document.body.setAttribute('data-conn', JSON.stringify(pts));
 }
 
 const deckGroup = new THREE.Group();

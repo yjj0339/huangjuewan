@@ -2,7 +2,7 @@
 // 层1 地面道路 G | 层2 主线A y=9 | 层3 主线B y=18 | 层4 主线C y=27 | 层5 主线D y=36
 // 匝道两端通过"锚点自动对接"生成：起点/终点直接吸附到目标道路的采样点，位置、
 // 标高、切向自动吻合，保证结构上真正互通。
-import * as THREE from '../vendor/three.module.js?v=38';
+import * as THREE from '../vendor/three.module.js?v=39';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -111,38 +111,46 @@ function rayCityCross(p, d) {
 }
 
 // 末端落地段：平滑降到地面，并一直延伸到最近的干道路口（路口即终点）
+// 最后 15m 渐变下沉至 0.12m，与干道路面齐平（不再有混凝土坎横在路口）
 export function endDescent(pts, dropLen = 320, yGround = 0.4) {
   const n0 = pts.length;
   const d = pts[n0 - 1].clone().sub(pts[n0 - 8]).setY(0).normalize();
   const y0 = pts[n0 - 1].y;
-  // 目标长度：至少降完坡再多走 20m；若前方有干道则停在路口过线 2m 处
+  const yEnd = yGround - 0.28;
   const cross = rayCityCross(pts[n0 - 1], d);
   const totalLen = cross !== null
-    ? Math.max(dropLen + 20, cross + 2)
+    ? Math.max(dropLen + 35, cross + 2)
     : dropLen + 60;
-  const n = Math.max(10, Math.round(totalLen / 7));
+  const n = Math.max(10, Math.round(totalLen / 6));
   for (let i = 1; i <= n; i++) {
     const dist = totalLen * i / n;
     const e = smooth01(Math.min(1, dist / dropLen));
-    pts.push(pts[n0 - 1].clone().addScaledVector(d, dist).setY(y0 + (yGround - y0) * e));
+    let y = y0 + (yGround - y0) * e;
+    const tailStart = totalLen - 15;
+    if (dist > tailStart) y -= (yGround - 0.12) * ((dist - tailStart) / 15);
+    pts.push(pts[n0 - 1].clone().addScaledVector(d, dist).setY(y));
   }
   return pts;
 }
 
-// 起点引坡段：在 pts[0] 之前反向外推同样的一段（另一端不再是悬空断头）
+// 起点引坡段：反向外推（远端最后 15m 同样与干道齐平）
 export function headDescent(pts, dropLen = 320, yGround = 0.4) {
   const d = pts[0].clone().sub(pts[7]).setY(0).normalize(); // 指向起点的外侧
   const y0 = pts[0].y;
+  const yEnd = yGround - 0.28;
   const cross = rayCityCross(pts[0], d);
   const totalLen = cross !== null
-    ? Math.max(dropLen + 20, cross + 2)
+    ? Math.max(dropLen + 35, cross + 2)
     : dropLen + 60;
-  const n = Math.max(10, Math.round(totalLen / 7));
+  const n = Math.max(10, Math.round(totalLen / 6));
   const head = [];
   for (let i = n; i >= 1; i--) { // 从远端向近端
     const dist = totalLen * i / n;
     const e = smooth01(Math.min(1, dist / dropLen));
-    head.push(pts[0].clone().addScaledVector(d, dist).setY(y0 + (yGround - y0) * e));
+    let y = y0 + (yGround - y0) * e;
+    const tailStart = totalLen - 15;
+    if (dist > tailStart) y -= (yGround - 0.12) * ((dist - tailStart) / 15);
+    head.push(pts[0].clone().addScaledVector(d, dist).setY(y));
   }
   pts.unshift(...head);
   return pts;

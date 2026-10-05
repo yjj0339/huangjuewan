@@ -1,6 +1,6 @@
 // 桥面几何：沿道路中心线扫描横断面 → 沥青桥面 + 混凝土边梁腹板 + 护栏 + 中央分隔墙；
 // 桥墩：锥形方柱 + 盖梁 + 基座，自动避让下方穿越的其它桥面。
-import * as THREE from '../vendor/three.module.js?v=38';
+import * as THREE from '../vendor/three.module.js?v=39';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
