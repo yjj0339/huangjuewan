@@ -1,8 +1,8 @@
 // 车流 + 玩家驾驶车：Blender GLB 精细车辆（按材质拆分实例化），
 // AI 车流在匝道/主线/地面路之间自动转接，全程连续不凭空消失。
-import * as THREE from '../vendor/three.module.js?v=37';
-import { mergeGeoms } from './deck.js?v=37';
-import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=37';
+import * as THREE from '../vendor/three.module.js?v=38';
+import { mergeGeoms } from './deck.js?v=38';
+import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=38';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const KINDS = ['sedan', 'suv', 'bus', 'truck'];
@@ -147,6 +147,13 @@ export class Traffic {
         c.speed = gs.get(k);
         c.baseSpeed = c.speed;
       }
+    }
+    // 按道路分桶（玩家碰撞查询用）
+    this.byRoad = new Map();
+    for (const c of this.cars) {
+      let a = this.byRoad.get(c.road);
+      if (!a) { a = []; this.byRoad.set(c.road, a); }
+      a.push(c);
     }
     // 按车型分组建实例（GLB 分材质 / 回退方块）
     const byKind = {};
@@ -397,6 +404,22 @@ export class PlayerCar {
         this.switchRoad(road.merge.road, road.merge.s + 2);
       } else {
         this.s = 2; // 干道尽头兜底环回（远在雾中）
+      }
+    }
+    // 与 AI 车碰撞避让：前方同向近车限制速度并保持间距（不再互相穿透）
+    if (this.traffic) {
+      const cars = this.traffic.byRoad.get(this.road) || [];
+      let ahead = null, bestGap = Infinity;
+      for (const c of cars) {
+        if (c.forward !== 1) continue;
+        if (Math.abs(c.laneOff - this.laneOff) > 2.6) continue;
+        const gap = c.s - this.s;
+        if (gap > 0 && gap < bestGap) { bestGap = gap; ahead = c; }
+      }
+      if (ahead) {
+        const minGap = 9 + this.speed * 0.5;
+        if (bestGap < minGap) this.speed = Math.min(this.speed, ahead.speed * 0.9);
+        if (bestGap < 8) this.s = ahead.s - 8; // 硬保底：留出可视间距，不再贴贴
       }
     }
     const f = this.road.frameAt(this.s);

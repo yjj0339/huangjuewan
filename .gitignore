@@ -2,5 +2,6 @@ server.log
 shots/
 node_modules/
 .mimosa/
+.edge-test/
 *.png
 !docs/qr-live.png

@@ -1,6 +1,6 @@
 // 程序化 PBR 纹理：沥青（含车道线/磨损/水渍）、混凝土（模板缝/污渍）、
 // 草地、建筑立面、交通标志、云与云影噪声。全部 Canvas 生成，零外部依赖。
-import * as THREE from '../vendor/three.module.js?v=37';
+import * as THREE from '../vendor/three.module.js?v=38';
 
 function canvas(w, h) {
   const c = document.createElement('canvas');
@@ -26,7 +26,7 @@ function toTex(c, srgb = true) {
 
 // ---------- 沥青路面 ----------
 // lanes: 单幅车道数; twoWay: 是否对向（画中缝黄线或双白线由几何保证，不画中线）
-export function makeAsphalt(lanes, { tileMeters = 18, roadW = 11.5 } = {}) {
+export function makeAsphalt(lanes, { tileMeters = 18, roadW = 11.5, edgeInset = 0 } = {}) {
   const W = 512, H = 512;
   const [c, g] = canvas(W, H);
   const rnd = rand(9137 + lanes * 77);
@@ -87,10 +87,11 @@ export function makeAsphalt(lanes, { tileMeters = 18, roadW = 11.5 } = {}) {
     g.fillRect(-rx, -rx, rx * 2, rx * 2);
     g.restore();
   }
-  // 边缘白实线
+  // 边缘白实线（edgeInset 将边线从断面边缘内缩，供匝道重叠合并区使用）
   g.fillStyle = 'rgba(225,228,230,0.85)';
-  g.fillRect(x0 - 2.5, 0, 3.4, H);
-  g.fillRect(x0 + lanes * laneW - 1, 0, 3.4, H);
+  const insetPx = (edgeInset || 0) * px;
+  g.fillRect(x0 - 2.5 + insetPx, 0, 3.4, H);
+  g.fillRect(x0 + lanes * laneW - 1 - insetPx, 0, 3.4, H);
   // 车道白虚线
   g.fillStyle = 'rgba(228,230,232,0.8)';
   for (let l = 1; l < lanes; l++) {

@@ -2,7 +2,7 @@
 // 层1 地面道路 G | 层2 主线A y=9 | 层3 主线B y=18 | 层4 主线C y=27 | 层5 主线D y=36
 // 匝道两端通过"锚点自动对接"生成：起点/终点直接吸附到目标道路的采样点，位置、
 // 标高、切向自动吻合，保证结构上真正互通。
-import * as THREE from '../vendor/three.module.js?v=37';
+import * as THREE from '../vendor/three.module.js?v=38';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 

@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=37';
+import * as THREE from '../vendor/three.module.js?v=38';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=37';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=37';
-import { buildDeck, buildPiers } from './deck.js?v=37';
+} from './textures.js?v=38';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=38';
+import { buildDeck, buildPiers } from './deck.js?v=38';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
-} from './props.js?v=37';
-import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=37';
-import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=37';
+} from './props.js?v=38';
+import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=38';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=38';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -27,6 +27,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.getElementById('app').appendChild(renderer.domElement);
 
 const params = new URLSearchParams(location.search); // 诊断/截图参数（全文件可用）
+const autoDrive = params.get('auto') === '1'; // 自动驾驶巡航（验证用）
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xc9d9e6, 1900, 6800);
@@ -43,7 +44,7 @@ camera.position.set(620, 470, 620);
 
 // ---------- 纹理与材质 ----------
 const asphalt3 = makeAsphalt(3, { roadW: 11.5 });
-const asphalt2 = makeAsphalt(2, { roadW: 9 });
+const asphalt2 = makeAsphalt(2, { roadW: 9, edgeInset: 0.55 }); // 匝道专用（边线内缩，避免重叠区白线横贯主线）
 const asphaltG3 = makeAsphalt(3, { roadW: 11.25 });
 const asphaltG2 = makeAsphalt(2, { roadW: 7.5 });
 const concreteTex = makeConcrete();
@@ -59,8 +60,8 @@ const asphaltMat = new THREE.MeshStandardMaterial({ map: asphalt3.tex, roughness
 const concreteMat = new THREE.MeshStandardMaterial({ map: concreteTex, roughness: 0.88, metalness: 0.02 });
 const metalMat = new THREE.MeshStandardMaterial({ color: 0xaab0b6, metalness: 0.85, roughness: 0.38 });
 const mats = { asphalt: asphaltMat, concrete: concreteMat, metal: metalMat, index: { asphalt: 0, concrete: 1, metal: 2 } };
-// 匝道材质：深度偏移，保证与主线重叠汇合处稳定压过主线表面（无缝且不闪烁）
-const rampAsphalt = asphaltMat.clone();
+// 匝道材质：专用 2 车道贴图 + 深度偏移（重叠汇合处稳定压过主线表面，无缝不闪）
+const rampAsphalt = new THREE.MeshStandardMaterial({ map: asphalt2.tex, roughness: 0.94, metalness: 0 });
 rampAsphalt.polygonOffset = true; rampAsphalt.polygonOffsetFactor = -2; rampAsphalt.polygonOffsetUnits = -2;
 const rampConcrete = concreteMat.clone();
 rampConcrete.polygonOffset = true; rampConcrete.polygonOffsetFactor = -2; rampConcrete.polygonOffsetUnits = -2;
@@ -209,7 +210,20 @@ loadCarAssets('./assets/cars/').then((assets) => {
   player = new PlayerCar(net, assets, traffic);
   scene.add(player.mesh);
   window.__DIAG.cars = traffic.cars.length;
-  if (params.get('drive')) setMode('drive');
+  if (params.get('drive') || autoDrive) setMode('drive');
+  // 静默实测：?realshot=15,30,45 → 真实时间到点自截并 POST 回本地服务器
+  if (params.get('realshot')) {
+    for (const t of params.get('realshot').split(',').map(Number)) {
+      setTimeout(() => {
+        try {
+          renderer.render(scene, camera);
+          renderer.domElement.toBlob((blob) => {
+            if (blob) fetch('/__shot?name=rt_' + t + '&perf=' + encodeURIComponent(document.title), { method: 'POST', body: blob });
+          }, 'image/png');
+        } catch (e) { /* 截图失败不影响主循环 */ }
+      }, t * 1000);
+    }
+  }
   if (params.get('follow')) {
     followCar = traffic.cars[(Math.random() * traffic.cars.length) | 0];
     setMode('follow');
@@ -526,6 +540,18 @@ const focus = new THREE.Vector3(0, 12, 0);
 let frames = 0, fpsAcc = 0, readyFrames = 0, frameNo = 0;
 let fpsAvg = 60, pxTier = 0, lastPRChange = 0;
 let hudAcc = 0;
+// 帧时间探针（?perf）：EMA + 窗口最大值写入标题，量化顿挫
+let pEma = 16, pMax = 0, pWin = 0;
+function perfProbe(dt) {
+  const ms = dt * 1000;
+  pEma = pEma * 0.9 + ms * 0.1;
+  if (ms > pMax) pMax = ms;
+  if (!params.get('perf')) return;
+  if (++pWin >= 90) {
+    document.title = `P avg=${pEma.toFixed(1)} max=${pMax.toFixed(1)}`;
+    pMax = 0; pWin = 0;
+  }
+}
 function applyPR() {
   const prs = [Math.min(devicePixelRatio, 1.75), 1.4, 1.0];
   renderer.setPixelRatio(prs[pxTier]);
@@ -554,6 +580,7 @@ function chaseCam(targetPos, fwd, dist, height, lookAhead, dt, speed = 0) {
 function tick() {
   requestAnimationFrame(tick);
   const dt = Math.min(clock.getDelta(), 0.05);
+  perfProbe(dt);
   if (mode === 'orbit') {
     // 轨道相机（带阻尼）
     if (ctl.auto) ctl.vSph.theta += dt * 0.028;
@@ -573,7 +600,24 @@ function tick() {
     engineSound(followCar.speed * followCar.forward);
     hudTick(dt, followCar.speed, followCar.road.name, null);
   } else if (mode === 'drive') {
+    // 自动驾驶巡航：保持本侧幅居中，出口临近时向出口侧靠边并驶入
+    if (autoDrive && player) {
+      input.up = true;
+      const [uMin, uMax] = player.uRange(player.road);
+      let exitSide = 0;
+      for (const ex of (player.exitsByRoad.get(player.road) || [])) {
+        if (player.s > ex.s - 110 && player.s < ex.s + 10) { exitSide = ex.side; break; }
+      }
+      const want = exitSide > 0 ? uMax : exitSide < 0 ? uMin : (uMin + uMax) / 2;
+      const d = want - player.laneOff;
+      // 出口窗口内持续按住出口方向（保证贴边时仍满足"正在打方向"的驶入条件）
+      input.turn = exitSide !== 0 ? exitSide : (Math.abs(d) > 0.2 ? Math.sign(d) : 0);
+    }
     const st = player.update(dt, input);
+    if (autoDrive && (frameNo % 40) === 0) {
+      document.title = `AUTO spd=${Math.round(st.speed * 3.6)} road=${player.road.name} s=${player.s.toFixed(0)}/${player.road.length.toFixed(0)} u=${player.laneOff.toFixed(1)} avg=${pEma.toFixed(1)} max=${pMax.toFixed(1)}`;
+      pMax = 0;
+    }
     chaseCam(st.pos, st.fwd, 8.2 + st.speed * 0.05, 3.4, 12, dt, st.speed);
     focus.copy(st.pos);
     engineSound(st.speed);

@@ -16,6 +16,23 @@ const MIME = {
 
 http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
+  // 页面截图回传通道（静默实测：离屏窗口内页面自截并 POST 到这里）
+  if (req.method === 'POST' && p === '/__shot') {
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const name = (q.get('name') || 'shot').replace(/[^\w.-]/g, '_');
+    const perf = q.get('perf') || '';
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const buf = Buffer.concat(chunks);
+      const dir = path.join(ROOT, 'shots');
+      try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { /* exists */ }
+      fs.writeFileSync(path.join(dir, name + '.png'), buf);
+      fs.writeFileSync(path.join(dir, name + '.txt'), perf);
+      res.writeHead(200); res.end('ok ' + buf.length);
+    });
+    return;
+  }
   if (p === '/') p = '/index.html';
   const file = path.resolve(ROOT, '.' + p);
   if (file !== ROOT && !file.startsWith(ROOT + path.sep)) {
