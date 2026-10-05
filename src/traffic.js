@@ -79,6 +79,7 @@ export class Traffic {
           road,
           s: Math.random() * road.length,
           laneOff,
+          laneIdx,
           forward,
           speed: (spd[0] + Math.random() * (spd[1] - spd[0])) * (isRamp ? 0.55 : isGround ? 0.42 : 1) * (forward === 1 ? 1 : 1),
           kind: kName,
@@ -117,6 +118,7 @@ export class Traffic {
   }
   update(dt) {
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1, 1, 1);
+    this.followGaps();
     for (const c of this.cars) {
       c.s += c.speed * c.forward * dt;
       if (c.s > c.road.length) c.s -= c.road.length;
@@ -130,6 +132,35 @@ export class Traffic {
       c.inst.setMatrixAt(c.idx, m);
     }
     for (const inst of Object.values(this.kinds)) inst.instanceMatrix.needsUpdate = true;
+  }
+
+  // 同车道跟车：与前车保持安全间距，杜绝同车道车辆互相穿透
+  followGaps() {
+    const groups = new Map();
+    for (const c of this.cars) {
+      const k = c.road.name + '|' + c.laneIdx + '|' + c.forward;
+      let arr = groups.get(k);
+      if (!arr) { arr = []; groups.set(k, arr); }
+      arr.push(c);
+    }
+    for (const arr of groups.values()) {
+      if (arr.length < 2) continue;
+      arr.sort((a, b) => a.s - b.s);
+      const L = arr[0].road.length;
+      // 环回端（最前 vs 最后）先处理
+      const wrapGap = arr[0].s + L - arr[arr.length - 1].s;
+      const mgLast = 9 + arr[arr.length - 1].speed * 0.55;
+      if (wrapGap < mgLast) arr[arr.length - 1].s = arr[0].s + L - mgLast;
+      // 从前向后依次保证间距
+      for (let j = arr.length - 1; j >= 1; j--) {
+        const mg = 9 + arr[j - 1].speed * 0.55;
+        if (arr[j].s - arr[j - 1].s < mg) arr[j - 1].s = arr[j].s - mg;
+      }
+      for (const c of arr) {
+        if (c.s >= L) c.s -= L;
+        if (c.s < 0) c.s += L;
+      }
+    }
   }
 }
 

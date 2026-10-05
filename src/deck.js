@@ -163,14 +163,29 @@ function carriagewaySweep(buffers, framesAll, centerOff, cw, mats) {
 }
 
 // ---- 桥墩 ----
-export function buildPiers(roads, grid) {
+export function buildPiers(roads, grid, grounds = []) {
   const items = [];
   const concreteColor = 0xb4b6b8;
   const placed = [];
+  // 地面道路样本：桥墩不得立在地面道路的路面上
+  const groundSamples = [];
+  for (const g of grounds) {
+    for (let s = 0; s <= g.length; s += 6) {
+      const p = g.pts[g._seg(s)];
+      groundSamples.push(p.x, p.z);
+    }
+  }
+  const nearGround = (x, z, r) => {
+    const rr = r * r;
+    for (let i = 0; i < groundSamples.length; i += 2) {
+      const dx = groundSamples[i] - x, dz = groundSamples[i + 1] - z;
+      if (dx * dx + dz * dz < rr) return true;
+    }
+    return false;
+  };
   for (const road of roads) {
     if (road.kind === 'ground') continue;
     const gap = road.kind === 'main' ? 30 : 25;
-    const half = road.width / 2;
     for (let s = gap * 0.6; s < road.length - gap * 0.6; s += gap) {
       // 微扰错开相邻线路的墩位节奏
       const sTry = [0, 7, -7, 14, -14];
@@ -181,7 +196,8 @@ export function buildPiers(roads, grid) {
         const f = road.frameAt(ss);
         const x = f.p.x, z = f.p.z, deckY = f.p.y;
         if (deckY < 2.2) continue; // 已贴地段不再立墩
-        if (blocked(grid, x, z, deckY - 1.6, road)) continue;
+        if (nearGround(x, z, 14)) continue; // 不立在地面上道路中
+        if (blocked(grid, x, z, deckY, road)) continue;
         if (placed.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 < 64)) continue;
         const groundY = 0;
         const capY = deckY - 1.55;
@@ -219,12 +235,15 @@ export function buildPiers(roads, grid) {
   return { geo: merged, placed };
 }
 
-function blocked(grid, x, z, capY, selfRoad) {
-  // 桥墩不得穿过任何更低桥面：检测半径须覆盖最大半幅宽（主线 dual ≈13m）+ 柱半径
-  const near = grid.circle(x, z, 18);
+// 桥墩与任何其它桥面（无论上下）都必须错开：
+// 其它桥面中心低于本桥面 -0.25m 时，其桥板会撞上本墩的盖梁/柱身
+function blocked(grid, x, z, deckY, selfRoad) {
+  const near = grid.circle(x, z, 20);
   for (const q of near) {
-    if (Math.abs(q.x - x) > 16 || Math.abs(q.z - z) > 16) continue;
-    if (q.y < capY - 0.6) return true;
+    if (q.road === selfRoad) continue;
+    const lat = Math.hypot(q.x - x, q.z - z);
+    if (lat > q.half + 3.2) continue;
+    if (q.y < deckY - 0.25) return true;
   }
   return false;
 }

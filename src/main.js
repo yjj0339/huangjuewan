@@ -5,7 +5,7 @@ import {
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
 } from './textures.js';
-import { buildNetwork, buildCollisionGrid, LEVELS } from './roads.js';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js';
 import { buildDeck, buildPiers } from './deck.js';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
@@ -29,6 +29,13 @@ const params = new URLSearchParams(location.search); // 诊断/截图参数（�
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0xc9d9e6, 1900, 6800);
+
+// 诊断：?at=x,z,h → 任意点位俯视
+let diagAt = null;
+if (params.get('at')) {
+  const [ax, az, ah] = params.get('at').split(',').map(Number);
+  diagAt = { x: ax, z: az, h: ah || 120 };
+}
 
 const camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.5, 12000);
 camera.position.set(620, 470, 620);
@@ -54,7 +61,12 @@ const mats = { asphalt: asphaltMat, concrete: concreteMat, metal: metalMat, inde
 
 // ---------- 路网 + 桥梁 ----------
 const net = buildNetwork();
-const grid = buildCollisionGrid(net.mains);
+const grid = buildCollisionGrid([...net.mains, ...net.ramps]);
+if (params.get('audit')) {
+  const conf = auditClearances(net);
+  document.body.setAttribute('data-audit', JSON.stringify({ n: conf.length, items: conf.slice(0, 24) }));
+  document.title = 'AUDIT' + conf.length;
+}
 
 // 沥青纹理按车道数分配：先铺 deck 前给每种 road 绑定纹理（通过材质分组：主/匝道共用3车道贴图，
 // 匝道9m 宽用 2 车道贴图 —— 通过在 buildDeck 里按 road.lanes 换 u 缩放即可，此处简单起见共用）
@@ -69,7 +81,7 @@ for (const road of [...net.mains, ...net.ramps]) {
 scene.add(deckGroup);
 
 // 桥墩
-const piers = buildPiers([...net.mains, ...net.ramps], grid);
+const piers = buildPiers([...net.mains, ...net.ramps], grid, net.grounds);
 const pierMesh = new THREE.Mesh(piers.geo, concreteMat);
 pierMesh.castShadow = true;
 pierMesh.receiveShadow = true;
@@ -88,7 +100,7 @@ const groundRoads = makeGroundRoads(net.grounds, { 3: asphaltG3, 2: asphaltG2 })
 scene.add(groundRoads);
 
 // ---------- 附属 ----------
-const lamps = placeLamps([...net.mains, ...net.ramps], makeLampGeometry());
+const lamps = placeLamps([...net.mains, ...net.ramps], makeLampGeometry(), grid);
 scene.add(lamps);
 
 const signMats = {
@@ -100,18 +112,19 @@ const signMats = {
   texG5: makeSign('green', [{ text: '朝天门大桥', arrow: 'up' }, { text: '江北区', arrow: 'left' }]),
   texG6: makeSign('green', [{ text: '黄桷湾立交', arrow: 'up' }, { text: '盘龙 出口', arrow: 'right' }]),
 };
-scene.add(makeSigns(net, signMats));
+scene.add(makeSigns(net, signMats, grid));
 
 // ---------- 绿化 + 城市 ----------
-// 近地匝道段样本（扁平 [x,z,...]），供植被避让
-const lowSamples = [];
+// 植被避让：乔木避开 14m 以下的桥面（树高可到 13m），灌木避开 4.5m 以下的低桥
+const treeClear = [], bushClear = [];
 for (const road of [...net.ramps, ...net.mains]) {
   for (let s = 0; s <= road.length; s += 8) {
     const p = road.pts[road._seg(s)];
-    if (p.y < 3.2) { lowSamples.push(p.x, p.z); }
+    if (p.y < 14) treeClear.push(p.x, p.z);
+    if (p.y < 4.5) bushClear.push(p.x, p.z);
   }
 }
-scene.add(makeVegetation(piers.placed, [...net.grounds], lowSamples));
+scene.add(makeVegetation(piers.placed, [...net.grounds], treeClear, bushClear));
 scene.add(makeCity(net, texResi, texGlass, texShop, texCityGround));
 
 // ---------- 天空/光/云 ----------
@@ -375,6 +388,15 @@ const PRESETS = {
 };
 let presetName = 'bird';
 function applyPreset(name, instant = true) {
+  if (diagAt) {
+    ctl.target.set(diagAt.x, 0, diagAt.z);
+    camera.position.set(diagAt.x + 0.01, diagAt.h, diagAt.z + 0.01);
+    camera.lookAt(ctl.target);
+    ctl.sph.setFromVector3(camera.position.clone().sub(ctl.target));
+    ctl.vSph.theta = 0; ctl.vSph.phi = 0;
+    ctl.auto = false;
+    return;
+  }
   const p = PRESETS[name];
   if (!p) return;
   presetName = name;

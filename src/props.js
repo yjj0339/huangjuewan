@@ -4,6 +4,15 @@ import { mergeGeoms } from './deck.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+// 点位上方 [dyMin, dyMax] 高度带内是否有别的桥面经过（水平半径 rad 内）
+function blockedAbove(grid, pos, deckY, rad, dyMax, dyMin = 1.5) {
+  const near = grid.circle(pos.x, pos.z, rad);
+  for (const q of near) {
+    if (q.y > deckY + dyMin && q.y < deckY + dyMax) return true;
+  }
+  return false;
+}
+
 // ---------- 路灯（实例化） ----------
 export function makeLampGeometry() {
   const items = [];
@@ -23,7 +32,7 @@ export function makeLampGeometry() {
   return mergeGeoms(items);
 }
 
-export function placeLamps(roads, lampsGeo) {
+export function placeLamps(roads, lampsGeo, grid) {
   const items = [];
   for (const road of roads) {
     if (road.kind === 'ground') continue;
@@ -33,6 +42,8 @@ export function placeLamps(roads, lampsGeo) {
       const f = road.frameAt(s);
       for (const sgn of (road.kind === 'main' ? [1, -1] : [1])) {
         const base = f.p.clone().addScaledVector(f.side, sgn * (half + 0.5));
+        // 上方 11m 内有别的桥面经过 → 灯杆会戳穿它，跳过
+        if (grid && blockedAbove(grid, base, f.p.y, 7, 11)) continue;
         // 悬臂朝向路中线 → +X 指向 -side*sgn
         const d = f.side.clone().multiplyScalar(-sgn);
         const rotY = Math.atan2(-d.z, d.x);
@@ -56,7 +67,7 @@ export function placeLamps(roads, lampsGeo) {
 }
 
 // ---------- 交通标志 ----------
-export function makeSigns(roads, signMats) {
+export function makeSigns(roads, signMats, grid) {
   const g = new THREE.Group();
   const [A, B, C, D] = roads.mains;
   const postMat = signMats.post;
@@ -71,6 +82,7 @@ export function makeSigns(roads, signMats) {
   ];
   for (const gd of gantryDefs) {
     const f = gd.road.frameAt(gd.s);
+    if (grid && blockedAbove(grid, f.p, f.p.y, gd.w / 2 + 2, 9.5, 1.5)) continue; // 上方有桥面穿过则不设门架
     const half = gd.w / 2;
     const grp = new THREE.Group();
     const postH = gd.road.kind === 'main' ? 7.2 : 6;
@@ -84,14 +96,24 @@ export function makeSigns(roads, signMats) {
     beam.position.set(0, postH - 0.4, 0);
     beam.castShadow = true;
     grp.add(beam);
+    // 标志牌：单面文字 + 灰色背板（背面不再透出镜像字）
+    const backMat = new THREE.MeshStandardMaterial({ color: 0xaeb4b9, roughness: 0.7, side: THREE.DoubleSide });
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(7.4, 3.4),
-      new THREE.MeshStandardMaterial({ map: gd.tex, roughness: 0.55, side: THREE.DoubleSide }));
+      new THREE.MeshStandardMaterial({ map: gd.tex, roughness: 0.55 }));
     panel.position.set(-half * 0.25, postH - 2.6, 0.05);
     grp.add(panel);
+    const back1 = new THREE.Mesh(new THREE.PlaneGeometry(7.4, 3.4), backMat);
+    back1.position.set(-half * 0.25, postH - 2.6, 0.02);
+    back1.rotation.y = Math.PI;
+    grp.add(back1);
     const panel2 = new THREE.Mesh(new THREE.PlaneGeometry(5.4, 2.5),
-      new THREE.MeshStandardMaterial({ map: signMats.texG1, roughness: 0.55, side: THREE.DoubleSide }));
+      new THREE.MeshStandardMaterial({ map: signMats.texG1, roughness: 0.55 }));
     panel2.position.set(half * 0.42, postH - 2.5, 0.05);
     grp.add(panel2);
+    const back2 = new THREE.Mesh(new THREE.PlaneGeometry(5.4, 2.5), backMat);
+    back2.position.set(half * 0.42, postH - 2.5, 0.02);
+    back2.rotation.y = Math.PI;
+    grp.add(back2);
     grp.position.copy(f.p);
     grp.rotation.y = Math.atan2(f.tan.x, f.tan.z) + Math.PI; // 牌面朝向来车方向，文字正读
     g.add(grp);
@@ -106,14 +128,20 @@ export function makeSigns(roads, signMats) {
   for (const ed of exitDefs) {
     if (!ed.road) continue;
     const f = ed.road.frameAt(ed.road.length * 0.35);
+    if (grid && blockedAbove(grid, f.p, f.p.y, 4, 7, 1.5)) continue;
     const grp = new THREE.Group();
     const post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 4.6, 8), postMat);
     post.position.y = 2.3;
     grp.add(post);
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.8),
-      new THREE.MeshStandardMaterial({ map: ed.tex, roughness: 0.55, side: THREE.DoubleSide }));
-    panel.position.set(0, 4.4, 0);
+      new THREE.MeshStandardMaterial({ map: ed.tex, roughness: 0.55 }));
+    panel.position.set(0, 4.4, 0.02);
     grp.add(panel);
+    const backS = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 1.8),
+      new THREE.MeshStandardMaterial({ color: 0xaeb4b9, roughness: 0.7 }));
+    backS.position.set(0, 4.4, -0.02);
+    backS.rotation.y = Math.PI;
+    grp.add(backS);
     grp.position.copy(f.p).addScaledVector(f.side, -(ed.road.width / 2 + 1.2));
     grp.rotation.y = Math.atan2(f.tan.x, f.tan.z) + Math.PI; // 牌面朝向来车方向
     g.add(grp);
@@ -159,7 +187,7 @@ export function makeGroundRoads(grounds, asphaltTexByLanes) {
 }
 
 // ---------- 绿化：灌木 / 乔木 ----------
-export function makeVegetation(pierPositions, groundRoads, lowSamples) {
+export function makeVegetation(pierPositions, groundRoads, treeClear, bushClear) {
   const group = new THREE.Group();
   // 灌木
   const shrubGeo = new THREE.IcosahedronGeometry(1, 1);
@@ -172,7 +200,8 @@ export function makeVegetation(pierPositions, groundRoads, lowSamples) {
   let placedShrub = 0;
   for (let tries = 0; tries < N_SHRUB * 14 && placedShrub < N_SHRUB; tries++) {
     const x = (Math.random() - 0.5) * 760, z = (Math.random() - 0.5) * 760;
-    if (!clearOfRoads(x, z, 5.5, groundRoads, lowSamples)) continue;
+    if (!clearOfRoads(x, z, 5.5, groundRoads, bushClear)) continue;
+    if (inPond(x, z, 42)) continue;
     const s = 0.5 + Math.random() * 1.5;
     q.setFromAxisAngle(UP, Math.random() * Math.PI * 2);
     sc.set(s, s * (0.7 + Math.random() * 0.5), s);
@@ -203,7 +232,8 @@ export function makeVegetation(pierPositions, groundRoads, lowSamples) {
   let tCount = 0;
   for (let tries = 0; tries < N_TREE * 20 && tCount < N_TREE; tries++) {
     const x = (Math.random() - 0.5) * 780, z = (Math.random() - 0.5) * 780;
-    if (!clearOfRoads(x, z, 7.5, groundRoads, lowSamples)) continue;
+    if (!clearOfRoads(x, z, 7.5, groundRoads, treeClear)) continue;
+    if (inPond(x, z, 48)) continue;
     if (pierPositions.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 < 30)) continue;
     if (placedTree.some(p => (p.x - x) ** 2 + (p.z - z) ** 2 < 36)) continue;
     const s = 1.15 + Math.random() * 1.15;
@@ -222,7 +252,7 @@ export function makeVegetation(pierPositions, groundRoads, lowSamples) {
   return group;
 }
 
-function clearOfRoads(x, z, r, groundRoads, lowSamples) {
+function clearOfRoads(x, z, r, groundRoads, clearList) {
   for (const road of groundRoads) {
     for (let s = 0; s <= road.length; s += 6) {
       const p = road.pts[road._seg(s)];
@@ -230,15 +260,21 @@ function clearOfRoads(x, z, r, groundRoads, lowSamples) {
       if (dx * dx + dz * dz < (r + road.width / 2) ** 2) return false;
     }
   }
-  // 近地匝道段（引道/落地段，lowSamples 为 [x,z,x,z...] 扁平数组）也不许长树
-  if (lowSamples) {
-    const rr = (r + 5) * (r + 5);
-    for (let i = 0; i < lowSamples.length; i += 2) {
-      const dx = lowSamples[i] - x, dz = lowSamples[i + 1] - z;
+  // 低空桥面样本（扁平 [x,z,...]）：乔木高度可能戳穿低桥面
+  if (clearList) {
+    const rr = (r + 6) * (r + 6);
+    for (let i = 0; i < clearList.length; i += 2) {
+      const dx = clearList[i] - x, dz = clearList[i + 1] - z;
       if (dx * dx + dz * dz < rr) return false;
     }
   }
   return true;
+}
+
+// 池塘区域（椭圆 34×1.35 @ (-350,250)）
+function inPond(x, z, margin) {
+  const dx = (x + 350) / 1.35, dz = z - 250;
+  return dx * dx + dz * dz < (34 + margin) ** 2;
 }
 
 // ---------- 远景城市（四类建筑原型，带屋顶细节） ----------
@@ -262,8 +298,9 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
     group.add(ground);
   }
   const corridor = [];
-  for (const road of [...roads.mains, ...roads.grounds]) {
-    for (let s = 0; s <= road.length; s += 10) corridor.push(road.pts[road._seg(s)]);
+  // 主线（含落地段）+ 地面路 + 全部匝道：建筑不得压在Any道路上
+  for (const road of [...roads.mains, ...roads.grounds, ...roads.ramps]) {
+    for (let s = 0; s <= road.length; s += 8) corridor.push(road.pts[road._seg(s)]);
   }
   const clearOfCorridor = (x, z, r) => {
     for (const p of corridor) {
@@ -433,12 +470,5 @@ export function makePark(parkTex, pathTex, waterTex) {
   pond.scale.set(1.35, 1, 1);
   pond.position.set(-350, 0.07, 250);
   g.add(pond);
-  // 环形步道（细环）
-  const ring = new THREE.Mesh(new THREE.RingGeometry(206, 211, 72),
-    new THREE.MeshStandardMaterial({ color: 0xd8cfba, roughness: 0.9 }));
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = 0.045;
-  ring.receiveShadow = true;
-  g.add(ring);
   return g;
 }
