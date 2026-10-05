@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=35';
+import * as THREE from '../vendor/three.module.js?v=36';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=35';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=35';
-import { buildDeck, buildPiers } from './deck.js?v=35';
+} from './textures.js?v=36';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=36';
+import { buildDeck, buildPiers } from './deck.js?v=36';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
-} from './props.js?v=35';
-import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=35';
-import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=35';
+} from './props.js?v=36';
+import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=36';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=36';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -205,7 +205,7 @@ let player = null;
 loadCarAssets('./assets/cars/').then((assets) => {
   traffic = new Traffic(net, 1, assets);
   scene.add(traffic.group);
-  player = new PlayerCar(net, assets);
+  player = new PlayerCar(net, assets, traffic);
   scene.add(player.mesh);
   window.__DIAG.cars = traffic.cars.length;
   if (params.get('drive')) setMode('drive');
@@ -524,9 +524,19 @@ const chaseTarget = new THREE.Vector3(), lookPos = new THREE.Vector3();
 const focus = new THREE.Vector3(0, 12, 0);
 let frames = 0, fpsAcc = 0, readyFrames = 0;
 let fpsAvg = 60, pxTier = 0, lastPRChange = 0;
+let hudAcc = 0;
 function applyPR() {
-  const prs = [Math.min(devicePixelRatio, 2), 1.5, 1];
+  const prs = [Math.min(devicePixelRatio, 1.75), 1.4, 1.0];
   renderer.setPixelRatio(prs[pxTier]);
+}
+// HUD 节流：每 0.15s 更新一次文字（避免逐帧触发布局）
+function hudTick(dt, speed, roadName, hint) {
+  hudAcc += dt;
+  if (hudAcc < 0.15) return;
+  hudAcc = 0;
+  hudSpeed.textContent = Math.round(Math.abs(speed) * 3.6);
+  hudRoad.textContent = roadName;
+  if (hint !== null) hudHint.textContent = hint;
 }
 function chaseCam(targetPos, fwd, dist, height, lookAhead, dt, speed = 0) {
   chaseTarget.copy(targetPos).addScaledVector(fwd, -dist).addScaledVector(UPV, height);
@@ -560,17 +570,15 @@ function tick() {
     chaseCam(pos, fwd, 8.5 + extra, 3.3 + extra * 0.25, 9, dt, followCar.speed * followCar.forward);
     focus.copy(pos);
     engineSound(followCar.speed * followCar.forward);
-    hudSpeed.textContent = Math.round(Math.abs(followCar.speed) * 3.6);
-    hudRoad.textContent = followCar.road.name;
+    hudTick(dt, followCar.speed, followCar.road.name, null);
   } else if (mode === 'drive') {
     const st = player.update(dt, input);
     chaseCam(st.pos, st.fwd, 8.2 + st.speed * 0.05, 3.4, 12, dt, st.speed);
     focus.copy(st.pos);
     engineSound(st.speed);
     if (!params.get('camdbg')) {
-      hudSpeed.textContent = Math.round(st.speed * 3.6);
-      hudRoad.textContent = player.road.name;
-      hudHint.textContent = player.hint || 'W/↑ 油门 · S/↓ 刹车 · A/D 变道（出口提示出现时按 ←/→ 转入匝道）· ESC 退出';
+      hudTick(dt, st.speed, player.road.name,
+        player.hint || 'W/↑ 油门 · S/↓ 刹车 · A/D 变道（出口提示出现时按 ←/→ 转入匝道）· ESC 退出');
     }
   }
 
@@ -588,8 +596,6 @@ function tick() {
   sun.position.copy(focus).add(new THREE.Vector3(420, 560, 300));
 
   renderer.render(scene, camera);
-  document.body.dataset.fr = frames; // 探针：rAF 帧计数
-  document.body.dataset.ft = Math.round(performance.now()); // 探针：真实时间
 
   if (readyFrames < 2) {
     readyFrames++;
@@ -615,12 +621,12 @@ function tick() {
       fpsEl.textContent = window.__DIAG.fps;
       fpsEl.parentElement.style.visibility = 'visible';
     }
-    // 自适应分辨率：帧率低自动降采样（弱机保流畅），恢复后再升回
-    fpsAvg = fpsAvg * 0.62 + window.__DIAG.fps * 0.38;
+    // 自适应分辨率：更积极的档位切换（弱机保流畅优先）
+    fpsAvg = fpsAvg * 0.55 + window.__DIAG.fps * 0.45;
     const nowMs = performance.now();
-    if (nowMs - lastPRChange > 5000) {
-      if (fpsAvg < 32 && pxTier < 2) { pxTier++; applyPR(); lastPRChange = nowMs; }
-      else if (fpsAvg > 54 && pxTier > 0) { pxTier--; applyPR(); lastPRChange = nowMs; }
+    if (nowMs - lastPRChange > 2500) {
+      if (fpsAvg < 50 && pxTier < 2) { pxTier++; applyPR(); lastPRChange = nowMs; }
+      else if (fpsAvg > 58 && pxTier > 0) { pxTier--; applyPR(); lastPRChange = nowMs; }
     }
   }
   // 驾驶小地图

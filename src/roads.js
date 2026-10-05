@@ -2,7 +2,7 @@
 // 层1 地面道路 G | 层2 主线A y=9 | 层3 主线B y=18 | 层4 主线C y=27 | 层5 主线D y=36
 // 匝道两端通过"锚点自动对接"生成：起点/终点直接吸附到目标道路的采样点，位置、
 // 标高、切向自动吻合，保证结构上真正互通。
-import * as THREE from '../vendor/three.module.js?v=35';
+import * as THREE from '../vendor/three.module.js?v=36';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -50,6 +50,17 @@ export class Road {
     const tan = p1.clone().sub(p0).normalize();
     const side = tan.clone().cross(V3(0, 1, 0)).normalize(); // 行进方向右侧
     return { p, tan, side };
+  }
+  // 零分配采样：结果写入调用方提供的向量（热路径专用，避免每帧数千次 GC 卡顿）
+  frameAtInto(s, p, tan, side) {
+    s = Math.max(0.001, Math.min(this.length - 0.001, s));
+    const i = this._seg(s);
+    const p0 = this.pts[i], p1 = this.pts[i + 1];
+    const segLen = this.cum[i + 1] - this.cum[i] || 1e-6;
+    const f = (s - this.cum[i]) / segLen;
+    p.copy(p0).lerp(p1, f);
+    tan.copy(p1).sub(p0).normalize();
+    side.copy(tan).cross(V3(0, 1, 0)).normalize();
   }
   anchorAt(s) {
     const f = this.frameAt(s);

@@ -1,6 +1,6 @@
 // 桥面几何：沿道路中心线扫描横断面 → 沥青桥面 + 混凝土边梁腹板 + 护栏 + 中央分隔墙；
 // 桥墩：锥形方柱 + 盖梁 + 基座，自动避让下方穿越的其它桥面。
-import * as THREE from '../vendor/three.module.js?v=35';
+import * as THREE from '../vendor/three.module.js?v=36';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -52,9 +52,18 @@ function sweep(profile, road, matIdx, opts, buffers) {
   for (let si = 0; si < segs; si++) {
     const a = profile[si], b = profile[(si + 1) % m];
     const edgeLen = Math.hypot(b.u - a.u, b.v - a.v) || 0.001;
+    let prevSkip = false;
     for (let i = 0; i < n - 1; i++) {
       const f0 = frames[i], f1 = frames[i + 1];
-      if (skipAt && skipAt(f0.s)) continue;
+      const isSkip = skipAt ? skipAt(f0.s) : false;
+      if (isSkip) {
+        // 豁口起始边界：给断开的端面封口（不露空心断面）
+        if (opts.capEdges && !prevSkip && i > 0) capFan(buffers, f0, profile, true, matIdx);
+        prevSkip = true;
+        continue;
+      }
+      if (opts.capEdges && prevSkip) capFan(buffers, f0, profile, false, matIdx);
+      prevSkip = false;
       const vBase = buffers.pos.length / 3;
       const corners = [
         [a, f0], [b, f0], [b, f1], [a, f1],
@@ -172,13 +181,13 @@ function carriagewaySweep(buffers, framesAll, centerOff, cw, mats, openings = nu
       { u: xt, v: 0.72 }, { u: sgn * (w2 + 0.02), v: 1.02 }, { u: x0, v: 1.02 },
     ];
     const skip = (s) => openAt(sgn, s);
-    sweep(prof, null, mats.index.concrete, { frames, tileLen: 5, closed: true, skipAt: skip }, buffers);
+    sweep(prof, null, mats.index.concrete, { frames, tileLen: 5, closed: true, skipAt: skip, capEdges: true }, buffers);
     // 金属栏（两道薄管矩形）
     for (const h of [1.22, 0.86]) {
       sweep([
         { u: sgn * (w2 + 0.05), v: h }, { u: sgn * (w2 + 0.05), v: h + 0.09 },
         { u: sgn * (w2 - 0.06), v: h + 0.09 }, { u: sgn * (w2 - 0.06), v: h },
-      ], null, mats.index.metal, { frames, tileLen: 5, closed: true, skipAt: skip }, buffers);
+      ], null, mats.index.metal, { frames, tileLen: 5, closed: true, skipAt: skip, capEdges: true }, buffers);
     }
   }
   // 端头封口：主体断面 + 护栏断面（起点、终点各一次；护栏被豁口覆盖时不再封口）

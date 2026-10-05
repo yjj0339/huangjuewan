@@ -1,8 +1,8 @@
 // 车流 + 玩家驾驶车：Blender GLB 精细车辆（按材质拆分实例化），
 // AI 车流在匝道/主线/地面路之间自动转接，全程连续不凭空消失。
-import * as THREE from '../vendor/three.module.js?v=35';
-import { mergeGeoms } from './deck.js?v=35';
-import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=35';
+import * as THREE from '../vendor/three.module.js?v=36';
+import { mergeGeoms } from './deck.js?v=36';
+import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=36';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const KINDS = ['sedan', 'suv', 'bus', 'truck'];
@@ -92,6 +92,10 @@ function laneOffsetsOf(road) {
   return Array.from({ length: road.lanes }, (_, i) => (i - (road.lanes - 1) / 2) * L);
 }
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+// 热路径共享临时量（零分配，避免每帧数千次 GC）
+const _M = new THREE.Matrix4(), _Q = new THREE.Quaternion(), _SC = new THREE.Vector3(1, 1, 1);
+const _P = new THREE.Vector3(), _T = new THREE.Vector3(), _S = new THREE.Vector3();
+const _FZ = new THREE.Vector3(0, 0, 1);
 
 export class Traffic {
   constructor(roads, density = 1, assets = null) {
@@ -130,7 +134,18 @@ export class Traffic {
           speed: (spd[0] + Math.random() * (spd[1] - spd[0])) * (isRamp ? 0.55 : isGround ? 0.42 : 1),
           kind: kName,
           parts: null,
+          laneTarget: laneOff,
         });
+      }
+    }
+    // 同（路|车道|方向）共享速度：车道内间距恒定，根除跟车抽搐
+    {
+      const gs = new Map();
+      for (const c of this.cars) {
+        const k = c.road.name + '|' + c.laneIdx + '|' + c.forward;
+        if (!gs.has(k)) gs.set(k, c.speed);
+        c.speed = gs.get(k);
+        c.baseSpeed = c.speed;
       }
     }
     // 按车型分组建实例（GLB 分材质 / 回退方块）
@@ -177,22 +192,27 @@ export class Traffic {
   }
 
   update(dt) {
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(1, 1, 1);
-    const fz = V3(0, 0, 1);
-    this.followGaps();
+    // 跟车约束每 3 帧一次（组内共享速度后间距基本恒定，无需每帧）
+    this._fgc = (this._fgc || 0) + 1;
+    if (this._fgc % 3 === 1) this.followGaps();
     for (const c of this.cars) {
       this.advance(c, dt);
-      const f = c.road.frameAt(c.s);
-      const pos = f.p.clone().addScaledVector(f.side, c.laneOff);
-      const fwd = f.tan.clone().multiplyScalar(c.forward);
-      q.setFromUnitVectors(fz, fwd);
-      m.compose(pos, q, sc);
-      for (const p of c.parts) p.inst.setMatrixAt(p.idx, m);
+      c.road.frameAtInto(c.s, _P, _T, _S);
+      // 换路后车道偏移向目标车位平滑滑入（不瞬移、不抽搐）
+      if (c.laneOff !== c.laneTarget) {
+        c.laneOff += (c.laneTarget - c.laneOff) * Math.min(1, dt * 1.8);
+        if (Math.abs(c.laneTarget - c.laneOff) < 0.04) c.laneOff = c.laneTarget;
+      }
+      _P.addScaledVector(_S, c.laneOff);
+      _T.multiplyScalar(c.forward);
+      _Q.setFromUnitVectors(_FZ, _T);
+      _M.compose(_P, _Q, _SC);
+      for (const p of c.parts) p.inst.setMatrixAt(p.idx, _M);
     }
     for (const inst of this.insts) inst.instanceMatrix.needsUpdate = true;
   }
 
-  // 单车推进：到主线/匝道尽头时驶入汇入道路（世界坐标连续）
+  // 单车推进：到主线/匝道尽头时驶入汇入道路（位置连续、车道平滑滑入）
   advance(c, dt) {
     c.s += c.speed * c.forward * dt;
     if (c.forward > 0 && c.s >= c.road.length - 0.2) {
@@ -211,7 +231,8 @@ export class Traffic {
           if (d < bd) { bd = d; bi = i; }
         }
         c.laneIdx = bi;
-        c.laneOff = offs[bi];
+        c.laneOff = clamp(lat, -c.road.width / 2 + 1, c.road.width / 2 - 1);
+        c.laneTarget = offs[bi];
         c.forward = 1;
         return;
       }
@@ -220,7 +241,7 @@ export class Traffic {
     if (c.s < 0) c.s += c.road.length;
   }
 
-  // 同车道跟车：与前车保持安全间距
+  // 同车道跟车（软化版）：优先速度匹配，硬保底仅在极近时生效
   followGaps() {
     const groups = new Map();
     for (const c of this.cars) {
@@ -234,13 +255,22 @@ export class Traffic {
       arr.sort((a, b) => a.s - b.s);
       const L = arr[0].road.length;
       const wrapGap = arr[0].s + L - arr[arr.length - 1].s;
-      const mgLast = 9 + arr[arr.length - 1].speed * 0.55;
-      if (wrapGap < mgLast) arr[arr.length - 1].s = arr[0].s + L - mgLast;
+      const mgLast = 8 + arr[arr.length - 1].speed * 0.55;
+      if (wrapGap < mgLast) {
+        arr[arr.length - 1].speed = Math.min(arr[arr.length - 1].speed, arr[0].speed);
+        if (wrapGap < mgLast * 0.55) arr[arr.length - 1].s = arr[0].s + L - mgLast * 0.55;
+      }
       for (let j = arr.length - 1; j >= 1; j--) {
-        const mg = 9 + arr[j - 1].speed * 0.55;
-        if (arr[j].s - arr[j - 1].s < mg) arr[j - 1].s = arr[j].s - mg;
+        const gap = arr[j].s - arr[j - 1].s;
+        const mg = 8 + arr[j - 1].speed * 0.55;
+        if (gap < mg) {
+          arr[j - 1].speed = Math.min(arr[j - 1].speed, arr[j].speed * (0.55 + 0.45 * clamp(gap / mg, 0, 1)));
+          if (gap < mg * 0.55) arr[j - 1].s = arr[j].s - mg * 0.55;
+        }
       }
       for (const c of arr) {
+        // 速度缓慢恢复回本车道基准速度
+        c.speed += (c.baseSpeed - c.speed) * 0.12;
         if (c.s >= L) c.s -= L;
         if (c.s < 0) c.s += L;
       }
@@ -250,7 +280,8 @@ export class Traffic {
 
 // ---------- 玩家驾驶车 ----------
 export class PlayerCar {
-  constructor(roads, assets) {
+  constructor(roads, assets, traffic = null) {
+    this.traffic = traffic;
     this.roads = roads;
     const parts = assets && assets.sedan;
     if (parts) {
@@ -290,7 +321,19 @@ export class PlayerCar {
   }
   place(road) {
     this.road = road || this.roads.mains[0];
-    this.s = this.road.length * 0.42;
+    // 出生点安全：避开 AI 车附近（不生成在别车身上）
+    let s = this.road.length * 0.42;
+    if (this.traffic) {
+      const near = this.traffic.cars.filter(c => c.road === this.road).map(c => c.s);
+      const ok = (sv) => near.every(n => Math.abs(n - sv) > 16 && Math.abs(n - sv) < this.road.length - 16);
+      if (!ok(s)) {
+        for (let d = 20; d <= 160; d += 20) {
+          if (ok(s + d)) { s += d; break; }
+          if (ok(s - d)) { s -= d; break; }
+        }
+      }
+    }
+    this.s = s;
     this.lane = this.road.carriageways === 'dual' ? this.road.lanes - 1 : 1;
     this.laneOff = laneOffsetsOf(this.road)[this.lane];
     this.speed = 0;

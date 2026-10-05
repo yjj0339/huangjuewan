@@ -1,6 +1,6 @@
 // 附属设施：路灯、交通标志（门架+立柱牌）、地面道路、公园绿地、乔灌木、远景城市
-import * as THREE from '../vendor/three.module.js?v=35';
-import { mergeGeoms } from './deck.js?v=35';
+import * as THREE from '../vendor/three.module.js?v=36';
+import { mergeGeoms } from './deck.js?v=36';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -61,7 +61,7 @@ export function placeLamps(roads, lampsGeo, grid) {
     m.compose(new THREE.Vector3(it.pos.x, it.pos.y, it.pos.z), q, sc);
     inst.setMatrixAt(i, m);
   });
-  inst.castShadow = true;
+  inst.castShadow = false; // 灯杆投影收益小、阴影开销大
   return inst;
 }
 
@@ -206,7 +206,7 @@ export function makeGroundRoads(grounds, asphaltTexByLanes) {
         new THREE.MeshStandardMaterial({ map: t, roughness: 0.94, color: 0xcfcfcf }));
       mesh.rotation.x = -Math.PI / 2;
       mesh.rotation.z = rotZ;
-      mesh.position.set((p0.x + p1.x) / 2, 0.05 + i * 0.025 + (sgn > 0 ? 0.004 : 0), (p0.z + p1.z) / 2)
+      mesh.position.set((p0.x + p1.x) / 2, 0.07 + i * 0.02 + (sgn > 0 ? 0.004 : 0), (p0.z + p1.z) / 2)
         .addScaledVector(side, sgn * (road.median / 2 + cw / 2));
       mesh.receiveShadow = true;
       g.add(mesh);
@@ -369,7 +369,7 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   // 占位网格：防止建筑互相叠压
   const occupied = new Set();
   const claim = (x, z) => {
-    const key = Math.round(x / 36) + ',' + Math.round(z / 36);
+    const key = Math.round(x / 55) + ',' + Math.round(z / 55);
     if (occupied.has(key)) return false;
     occupied.add(key);
     return true;
@@ -424,7 +424,7 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
 
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
   const col = new THREE.Color();
-  const fills = (n, rMin, rMax, place) => {
+  const fills = (n, rMin, rMax, clearR, place) => {
     let n0 = 0;
     for (let tries = 0; tries < n * 16 && n0 < n; tries++) {
       const a = Math.random() * Math.PI * 2;
@@ -433,7 +433,7 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
       const gz = Math.round(Math.sin(a) * r / 55) * 55;
       if (Math.hypot(gx, gz) < 530) continue;
       if (!claim(gx, gz)) continue;
-      if (!clearOfCorridor(gx, gz, 34)) continue;
+      if (!clearOfCorridor(gx, gz, clearR)) continue; // 含楼体半宽，楼不压路
       place(gx, gz, n0);
       n0++;
     }
@@ -452,7 +452,7 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   // 住宅楼
   const NResi = 300;
   const resi = new THREE.InstancedMesh(resiGeo, matResi, NResi);
-  fills(NResi, 560, 2050, (x, z, i) => {
+  fills(NResi, 560, 2050, 48, (x, z, i) => {
     setInst(resi, i, x, 0, z, 0.72 + Math.random() * 0.5, 0.62 + Math.random() * 0.75, 0.72 + Math.random() * 0.5, warm());
   });
   resi.count = NResi;
@@ -462,7 +462,7 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   // 写字楼
   const NOff = 130;
   const office = new THREE.InstancedMesh(offGeo, matGlass, NOff);
-  fills(NOff, 560, 2050, (x, z, i) => {
+  fills(NOff, 560, 2050, 50, (x, z, i) => {
     setInst(office, i, x, 0, z, 0.78 + Math.random() * 0.5, 0.75 + Math.random() * 0.85, 0.78 + Math.random() * 0.5, cool());
   });
   office.count = NOff;
@@ -471,7 +471,7 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   // 商业裙楼
   const NPois = 150;
   const podium = new THREE.InstancedMesh(podGeo, matShop, NPois);
-  fills(NPois, 560, 1500, (x, z, i) => {
+  fills(NPois, 560, 1500, 54, (x, z, i) => {
     setInst(podium, i, x, 0, z, 0.75 + Math.random() * 0.6, 0.75 + Math.random() * 0.6, 0.75 + Math.random() * 0.6, warm());
   });
   podium.count = NPois;
@@ -481,7 +481,7 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   const NPoint = 80;
   const pbase = new THREE.InstancedMesh(baseGeo, matShop, NPoint);
   const ptower = new THREE.InstancedMesh(towerGeo, matGlass, NPoint);
-  fills(NPoint, 620, 1750, (x, z, i) => {
+  fills(NPoint, 620, 1750, 44, (x, z, i) => {
     setInst(pbase, i, x, 0, z, 0.8, 1, 0.8, warm());
     setInst(ptower, i, x, 7.5, z, 0.85 + Math.random() * 0.3, 0.75 + Math.random() * 0.6, 0.85 + Math.random() * 0.3, cool());
   });
@@ -503,12 +503,12 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
       for (let gz = -1900; gz <= 1900 && cn < cap; gz += 36) {
         const d2 = gx * gx + gz * gz;
         if (d2 < R1 || d2 > R2) continue;
-        if (occupied.has(Math.round(gx / 36) + ',' + Math.round(gz / 36))) continue;
+        if (occupied.has(Math.round(gx / 55) + ',' + Math.round(gz / 55))) continue;
         if (Math.random() > 0.34) continue;
         if (!clearOfCorridor(gx, gz, 26)) continue;
         const nTree = 1 + (Math.random() * 3 | 0);
         for (let k = 0; k < nTree && cn < cap; k++) {
-          const x = gx + (Math.random() - 0.5) * 22, z = gz + (Math.random() - 0.5) * 22;
+          const x = gx + (Math.random() - 0.5) * 12, z = gz + (Math.random() - 0.5) * 12;
           if (!clearOfCorridor(x, z, 12)) continue;
           const s = 0.8 + Math.random() * 0.6;
           cq.setFromAxisAngle(UP, Math.random() * Math.PI * 2);
