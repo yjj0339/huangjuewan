@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=33';
+import * as THREE from '../vendor/three.module.js?v=34';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=33';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=33';
-import { buildDeck, buildPiers } from './deck.js?v=33';
+} from './textures.js?v=34';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=34';
+import { buildDeck, buildPiers } from './deck.js?v=34';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
-} from './props.js?v=33';
-import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=33';
-import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=33';
+} from './props.js?v=34';
+import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=34';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=34';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -84,6 +84,63 @@ for (const road of [...net.mains, ...net.ramps]) {
   deckGroup.add(mesh);
 }
 scene.add(deckGroup);
+
+// ---------- 驾驶小地图（拓扑底图一次绘制 + 动态目标点） ----------
+const miniCv = document.getElementById('minimap-cv');
+const miniCtx = miniCv.getContext('2d');
+const miniSize = miniCv.width;
+const miniWorld = 4900;
+const miniScale = miniSize / miniWorld;
+const miniBase = document.createElement('canvas');
+miniBase.width = miniBase.height = miniSize;
+{
+  const g = miniBase.getContext('2d');
+  g.fillStyle = '#eef3f7';
+  g.fillRect(0, 0, miniSize, miniSize);
+  const lvlColor = { A: '#9b59b6', B: '#e67e22', C: '#2ecc71', D: '#3498db' };
+  const draw = (road, color, width) => {
+    g.strokeStyle = color; g.lineWidth = width; g.lineJoin = 'round';
+    g.beginPath();
+    const step = Math.max(1, Math.floor(road.pts.length / 90));
+    for (let i = 0; i < road.pts.length; i += step) {
+      const p = road.pts[i];
+      const x = (p.x + miniWorld / 2) * miniScale, y = (p.z + miniWorld / 2) * miniScale;
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+  };
+  for (const r of net.grounds) draw(r, '#aab2b8', 1.1);
+  for (const r of net.ramps) draw(r, '#c3cad0', 0.8);
+  for (const m of net.mains) draw(m, lvlColor[m.level] || '#888888', 1.8);
+}
+const miniXY = (p) => [(p.x + miniWorld / 2) * miniScale, (p.z + miniWorld / 2) * miniScale];
+function drawMinimap() {
+  miniCtx.clearRect(0, 0, miniSize, miniSize);
+  miniCtx.drawImage(miniBase, 0, 0);
+  if (mode === 'drive' && player) {
+    // 前方 500m 内的匝道出口提示点
+    miniCtx.fillStyle = '#00b4d8';
+    for (const ex of (player.exitsByRoad.get(player.road) || [])) {
+      const ahead = ex.s - player.s;
+      if (ahead > 0 && ahead < 500) {
+        const [ex1, ey1] = miniXY(player.road.frameAt(ex.s).p);
+        miniCtx.beginPath(); miniCtx.arc(ex1, ey1, 3, 0, 7); miniCtx.fill();
+      }
+    }
+    const f = player.road.frameAt(player.s);
+    const [mx, my] = miniXY(f.p);
+    miniCtx.fillStyle = '#ff7a1f';
+    miniCtx.beginPath(); miniCtx.arc(mx, my, 3.6, 0, 7); miniCtx.fill();
+    miniCtx.strokeStyle = '#ff7a1f'; miniCtx.lineWidth = 2;
+    miniCtx.beginPath(); miniCtx.moveTo(mx, my);
+    miniCtx.lineTo(mx + f.tan.x * 9, my + f.tan.z * 9);
+    miniCtx.stroke();
+  } else if (mode === 'follow' && followCar) {
+    const [mx, my] = miniXY(followCar.road.frameAt(followCar.s).p);
+    miniCtx.fillStyle = '#2b6fd4';
+    miniCtx.beginPath(); miniCtx.arc(mx, my, 3.6, 0, 7); miniCtx.fill();
+  }
+}
 
 // 桥墩
 const piers = buildPiers([...net.mains, ...net.ramps], grid, net.grounds);
@@ -466,6 +523,11 @@ const UPV = new THREE.Vector3(0, 1, 0);
 const chaseTarget = new THREE.Vector3(), lookPos = new THREE.Vector3();
 const focus = new THREE.Vector3(0, 12, 0);
 let frames = 0, fpsAcc = 0, readyFrames = 0;
+let fpsAvg = 60, pxTier = 0, lastPRChange = 0;
+function applyPR() {
+  const prs = [Math.min(devicePixelRatio, 2), 1.5, 1];
+  renderer.setPixelRatio(prs[pxTier]);
+}
 function chaseCam(targetPos, fwd, dist, height, lookAhead, dt, speed = 0) {
   chaseTarget.copy(targetPos).addScaledVector(fwd, -dist).addScaledVector(UPV, height);
   camera.position.lerp(chaseTarget, 1 - Math.exp(-5.5 * dt));
@@ -553,7 +615,16 @@ function tick() {
       fpsEl.textContent = window.__DIAG.fps;
       fpsEl.parentElement.style.visibility = 'visible';
     }
+    // 自适应分辨率：帧率低自动降采样（弱机保流畅），恢复后再升回
+    fpsAvg = fpsAvg * 0.62 + window.__DIAG.fps * 0.38;
+    const nowMs = performance.now();
+    if (nowMs - lastPRChange > 5000) {
+      if (fpsAvg < 32 && pxTier < 2) { pxTier++; applyPR(); lastPRChange = nowMs; }
+      else if (fpsAvg > 54 && pxTier > 0) { pxTier--; applyPR(); lastPRChange = nowMs; }
+    }
   }
+  // 驾驶小地图
+  if (mode !== 'orbit') drawMinimap();
 }
 tick();
 

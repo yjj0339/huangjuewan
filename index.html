@@ -89,6 +89,16 @@
   #loading .bar { width: 220px; height: 6px; border-radius: 3px; background: #cfdde8; overflow: hidden; }
   #loading .bar i { display: block; height: 100%; width: 40%; border-radius: 3px; background: #3498db; animation: load 1.1s ease-in-out infinite; }
   @keyframes load { 0% { transform: translateX(-100%);} 100% { transform: translateX(320%);} }
+  /* 驾驶小地图 */
+  #minimap {
+    position: fixed; right: 22px; bottom: 96px; z-index: 9;
+    display: none; padding: 8px; border-radius: 14px;
+    background: rgba(255,255,255,.78); backdrop-filter: blur(10px);
+    box-shadow: 0 4px 16px rgba(60,90,120,.2); border: 1px solid rgba(255,255,255,.85);
+  }
+  #minimap canvas { display: block; border-radius: 8px; }
+  body.in-car #minimap { display: block; }
+  body.hideui #minimap { display: none !important; }
   /* 拍照模式：隐藏全部界面，右下角小圆点恢复 */
   #showui {
     position: fixed; right: 14px; bottom: 14px; z-index: 20;
@@ -103,6 +113,8 @@
     #title h1 { font-size: 19px; } #title p { font-size: 11px; }
     #panel button { font-size: 12px; padding: 7px 10px; }
     #legend { display: none; }
+    #minimap { right: 10px; top: 58px; bottom: auto; padding: 5px; }
+    #minimap canvas { width: 126px; height: 126px; }
     #drive-hud { top: 8px; padding: 6px 12px; }
     #drive-hud b { font-size: 22px; }
     #touch-controls { bottom: 250px; }
@@ -132,6 +144,8 @@
   <button id="tc-right">→</button>
   <button id="tc-gas">油门</button>
 </div>
+
+<div id="minimap"><canvas id="minimap-cv" width="170" height="170"></canvas></div>
 
 <div id="legend">
   <b>立体层数</b><br>
@@ -169,7 +183,7 @@
   }, true);
 </script>
 <script type="module">
-  import './src/main.js?v=33';
+  import './src/main.js?v=34';
   // 场景首帧渲染完成后淡出加载页；12s 提示构建中、30s 提示强刷，但始终继续等待
   const t0 = performance.now();
   let hinted = false;
