@@ -2,7 +2,7 @@
 // 层1 地面道路 G | 层2 主线A y=9 | 层3 主线B y=18 | 层4 主线C y=27 | 层5 主线D y=36
 // 匝道两端通过"锚点自动对接"生成：起点/终点直接吸附到目标道路的采样点，位置、
 // 标高、切向自动吻合，保证结构上真正互通。
-import * as THREE from '../vendor/three.module.js?v=32';
+import * as THREE from '../vendor/three.module.js?v=33';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -78,20 +78,62 @@ export function lineRoad(p0, p1, step = 6) {
   return pts;
 }
 
-// 落地延伸段：沿末端切向先平滑降到地面，再贴地延伸一段（消灭"断头高架桥"）
-export function descentTail(pts, dropLen = 460, runLen = 420, yGround = 0.4) {
+// 城市干道轴线（用于让主线落地后精确终止在路口，消灭"半路断头"）
+const CITY_LINES = [
+  { axis: 'z', v: 90 }, { axis: 'z', v: -280 }, { axis: 'z', v: -1500 }, { axis: 'z', v: 1500 },
+  { axis: 'x', v: -90 }, { axis: 'x', v: -1500 }, { axis: 'x', v: 1500 },
+];
+
+// 沿方向 d 从 p 出发，到最近城市干道轴线的距离（取不到则 null）
+function rayCityCross(p, d) {
+  let best = null;
+  for (const L of CITY_LINES) {
+    const dc = L.axis === 'z' ? d.z : d.x;
+    if (Math.abs(dc) < 1e-3) continue;
+    const t = ((L.v) - (L.axis === 'z' ? p.z : p.x)) / dc;
+    if (t < 40 || t > 3200) continue;
+    const cross = L.axis === 'z' ? p.x + d.x * t : p.z + d.z * t;
+    if (Math.abs(cross) > 2450) continue;
+    if (best === null || t < best) best = t;
+  }
+  return best;
+}
+
+// 末端落地段：平滑降到地面，并一直延伸到最近的干道路口（路口即终点）
+export function endDescent(pts, dropLen = 320, yGround = 0.4) {
   const n0 = pts.length;
   const d = pts[n0 - 1].clone().sub(pts[n0 - 8]).setY(0).normalize();
   const y0 = pts[n0 - 1].y;
-  const nDrop = Math.max(8, Math.round(dropLen / 6));
-  for (let i = 1; i <= nDrop; i++) {
-    const t = i / nDrop;
-    const e = smooth01(t);
-    pts.push(pts[n0 - 1].clone().addScaledVector(d, dropLen * t).setY(y0 + (yGround - y0) * e));
+  // 目标长度：至少降完坡再多走 30m；若前方有干道则停在路口过线 12m 处
+  const cross = rayCityCross(pts[n0 - 1], d);
+  const totalLen = cross !== null
+    ? Math.max(dropLen + 20, cross + 12)
+    : dropLen + 60;
+  const n = Math.max(10, Math.round(totalLen / 7));
+  for (let i = 1; i <= n; i++) {
+    const dist = totalLen * i / n;
+    const e = smooth01(Math.min(1, dist / dropLen));
+    pts.push(pts[n0 - 1].clone().addScaledVector(d, dist).setY(y0 + (yGround - y0) * e));
   }
-  const last = pts[pts.length - 1];
-  const nRun = Math.max(4, Math.round(runLen / 8));
-  for (let i = 1; i <= nRun; i++) pts.push(last.clone().addScaledVector(d, runLen * i / nRun).setY(yGround));
+  return pts;
+}
+
+// 起点引坡段：在 pts[0] 之前反向外推同样的一段（另一端不再是悬空断头）
+export function headDescent(pts, dropLen = 320, yGround = 0.4) {
+  const d = pts[0].clone().sub(pts[7]).setY(0).normalize(); // 指向起点的外侧
+  const y0 = pts[0].y;
+  const cross = rayCityCross(pts[0], d);
+  const totalLen = cross !== null
+    ? Math.max(dropLen + 20, cross + 12)
+    : dropLen + 60;
+  const n = Math.max(10, Math.round(totalLen / 7));
+  const head = [];
+  for (let i = n; i >= 1; i--) { // 从远端向近端
+    const dist = totalLen * i / n;
+    const e = smooth01(Math.min(1, dist / dropLen));
+    head.push(pts[0].clone().addScaledVector(d, dist).setY(y0 + (yGround - y0) * e));
+  }
+  pts.unshift(...head);
   return pts;
 }
 
@@ -136,12 +178,13 @@ export function rampFromAnchors(name, a0, a1, { ext0 = 70, ext1 = 70, off0 = tru
   let c2 = p3.clone().addScaledVector(a1.tan, -ext1);
   if (off0 && a0.half) {
     const s0 = Math.sign(crossY(a0.tan, c2.clone().sub(p0))) || 1;
-    const o = a0.side.clone().multiplyScalar(-s0 * (a0.half + RAMP_HALF + 0.3));
+    // 重叠 2.6m 而非留缝：桥面深度偏移材质保证不闪烁，视觉上无缝汇入
+    const o = a0.side.clone().multiplyScalar(-s0 * (a0.half + RAMP_HALF - 0.3));
     p0 = p0.add(o); c1 = c1.add(o);
   }
   if (off1 && a1.half) {
     const s1 = Math.sign(crossY(a1.tan, c2.clone().sub(p3))) || -1;
-    const o = a1.side.clone().multiplyScalar(-s1 * (a1.half + RAMP_HALF + 0.3));
+    const o = a1.side.clone().multiplyScalar(-s1 * (a1.half + RAMP_HALF - 0.3));
     p3 = p3.add(o); c2 = c2.add(o.clone().multiplyScalar(0.55));
   }
   const pts = bezierRoad(p0, c1, c2, p3, 5);
@@ -154,16 +197,23 @@ export function rampFromAnchors(name, a0, a1, { ext0 = 70, ext1 = 70, off0 = tru
   return new Road(name, 'ramp', null, { carriageways: 'single', lanes: 2 }, pts);
 }
 
-// 环形匝道：起点切向贴合 fromRoad（外移到路缘），圆弧扫过 sweepDeg 后自动对接 toRoad 路缘
-export function loopRamp(name, fromRoad, sExit, turn, r, sweepDeg, toRoad) {
+// 环形匝道：起点切向贴合 fromRoad（贴路缘），圆弧扫过 sweepDeg 后自动对接 toRoad 路缘
+// profile 可选：{t0, amp, w} —— 沿弧长的正态凸/凹（确定性上跨/下穿，解决多重编织无解区）
+export function loopRamp(name, fromRoad, sExit, turn, r, sweepDeg, toRoad, profile = null) {
   const a0 = fromRoad.anchorAt(sExit);
   const sideDir = a0.side.clone().multiplyScalar(turn);
-  const start = a0.half ? a0.p.clone().addScaledVector(sideDir, a0.half + RAMP_HALF + 0.3) : a0.p.clone();
+  const start = a0.half ? a0.p.clone().addScaledVector(sideDir, a0.half + RAMP_HALF - 0.3) : a0.p.clone();
   const center = start.clone().addScaledVector(sideDir, r);
   const yTarget = toRoad.pts[0].y; // 目标层高
   const θ0 = Math.atan2(start.z - center.z, start.x - center.x);
   const θ1 = θ0 + turn * (sweepDeg * Math.PI / 180);
   const arcPts = arcRoad(center, r, r, θ0, θ1, a0.p.y, yTarget, 4);
+  if (profile) {
+    for (let i = 0; i < arcPts.length; i++) {
+      const t = i / (arcPts.length - 1);
+      arcPts[i].y += profile.amp * Math.exp(-(((t - profile.t0) / (profile.w || 0.18)) ** 2));
+    }
+  }
   const arc = new Road(name + '_arc', 'ramp', null, { carriageways: 'single', lanes: 2 }, arcPts);
   const arcEnd = arc.anchorAt(arc.length);
   const sMerge = toRoad.nearestS(arcEnd.p.x, arcEnd.p.z);
@@ -193,20 +243,27 @@ export function buildNetwork() {
   const mains = [], ramps = [], grounds = [];
 
   // ===== 主线（两端落地延伸，接入城市路网，不再是断头高架）=====
-  // 主线 A：东西向高架（层2）
-  mains.push(new Road('主线A·东西', 'main', 'A', { carriageways: 'dual', lanes: 3, median: 3 },
-    descentTail(lineRoad(V3(-1050, LEVELS.A, -60), V3(1050, LEVELS.A, -60)))));
+  // 主线 A：东西向高架（层2）——两端落地并终止于城市干道路口
+  {
+    const pts = lineRoad(V3(-1050, LEVELS.A, -60), V3(1050, LEVELS.A, -60));
+    headDescent(pts, 220); endDescent(pts, 220);
+    mains.push(new Road('主线A·东西', 'main', 'A', { carriageways: 'dual', lanes: 3, median: 3 }, pts));
+  }
   // 主线 B：南北向高架（层3）
-  mains.push(new Road('主线B·南北', 'main', 'B', { carriageways: 'dual', lanes: 3, median: 3 },
-    descentTail(lineRoad(V3(40, LEVELS.B, 1050), V3(40, LEVELS.B, -1050)))));
+  {
+    const pts = lineRoad(V3(40, LEVELS.B, 1050), V3(40, LEVELS.B, -1050));
+    headDescent(pts, 340); endDescent(pts, 340);
+    mains.push(new Road('主线B·南北', 'main', 'B', { carriageways: 'dual', lanes: 3, median: 3 }, pts));
+  }
   // 主线 C：西北—东南 对角主线（层4，带缓曲）
   {
     const bez = bezierRoad(V3(-440, LEVELS.C, -330), V3(-150, LEVELS.C, -80), V3(140, LEVELS.C, 60), V3(440, LEVELS.C, 330));
     const end = bez[bez.length - 1];
     const d = bez[bez.length - 1].clone().sub(bez[bez.length - 6]).setY(0).normalize();
     const ext = lineRoad(end, end.clone().addScaledVector(d, 700));
-    mains.push(new Road('主线C·西北东南', 'main', 'C', { carriageways: 'dual', lanes: 3, median: 3 },
-      descentTail(bez.concat(ext.slice(1)))));
+    const pts = bez.concat(ext.slice(1));
+    headDescent(pts, 480); endDescent(pts, 480);
+    mains.push(new Road('主线C·西北东南', 'main', 'C', { carriageways: 'dual', lanes: 3, median: 3 }, pts));
   }
   // 主线 D：西南—东北 对角主线（层5 最高）
   {
@@ -214,8 +271,9 @@ export function buildNetwork() {
     const end = bez[bez.length - 1];
     const d = bez[bez.length - 6].clone().sub(bez[bez.length - 1]).setY(0).normalize().negate();
     const ext = lineRoad(end, end.clone().addScaledVector(d, 700));
-    mains.push(new Road('主线D·西南东北', 'main', 'D', { carriageways: 'dual', lanes: 3, median: 3 },
-      descentTail(bez.concat(ext.slice(1)))));
+    const pts = bez.concat(ext.slice(1));
+    headDescent(pts, 620); endDescent(pts, 620);
+    mains.push(new Road('主线D·西南东北', 'main', 'D', { carriageways: 'dual', lanes: 3, median: 3 }, pts));
   }
   const A = mains[0], B = mains[1], C = mains[2], D = mains[3];
 
@@ -226,20 +284,30 @@ export function buildNetwork() {
     lineRoad(V3(-90, LEVELS.G, 2300), V3(-90, LEVELS.G, -2300))));
   grounds.push(new Road('地面·北横路', 'ground', 'G', { carriageways: 'dual', lanes: 2, median: 2 },
     lineRoad(V3(-2300, LEVELS.G, -280), V3(2300, LEVELS.G, -280))));
+  // 二环干道（主线落地段的终点路口就落在这些路上）
+  grounds.push(new Road('地面·西三环', 'ground', 'G', { carriageways: 'dual', lanes: 3, median: 2.4 },
+    lineRoad(V3(-1500, LEVELS.G, 2400), V3(-1500, LEVELS.G, -2400))));
+  grounds.push(new Road('地面·东三环', 'ground', 'G', { carriageways: 'dual', lanes: 3, median: 2.4 },
+    lineRoad(V3(1500, LEVELS.G, 2400), V3(1500, LEVELS.G, -2400))));
+  grounds.push(new Road('地面·南四路', 'ground', 'G', { carriageways: 'dual', lanes: 3, median: 2.4 },
+    lineRoad(V3(-2400, LEVELS.G, -1500), V3(2400, LEVELS.G, -1500))));
+  grounds.push(new Road('地面·北四路', 'ground', 'G', { carriageways: 'dual', lanes: 3, median: 2.4 },
+    lineRoad(V3(-2400, LEVELS.G, 1500), V3(2400, LEVELS.G, 1500))));
   const G1 = grounds[0], G2 = grounds[1], G3 = grounds[2];
 
   // ===== 20 条匝道 =====
   // -- A×B 苜蓿叶环圈（4 条，围绕交点 (40,-60)）--
   ramps.push(loopRamp('匝道R1·A东转B北', A, A.nearestS(150, -60), +1, 52, 262, B));   // 9→18 上
   ramps.push(loopRamp('匝道R2·B北转A西', B, B.nearestS(40, -180), -1, 52, 262, A));   // 18→9 下
-  ramps.push(loopRamp('匝道R3·A西转B南', A, A.nearestS(-60, -60), +1, 52, 262, B));   // 9→18 上
-  ramps.push(loopRamp('匝道R4·B南转A东', B, B.nearestS(40, 60), -1, 52, 262, A));     // 18→9 下
+  ramps.push(loopRamp('匝道R3·A西转B南', A, A.nearestS(-60, -60), +1, 52, 262, B, { t0: 0.70, amp: +5.0, w: 0.22 })); // 9→18 上（编织区上跨驼峰）
+  ramps.push(loopRamp('匝道R4·B南转A东', B, B.nearestS(40, 60), -1, 52, 262, A, { t0: 0.70, amp: -5.0, w: 0.22 }));     // 18→9 下（编织区下穿凹槽）
 
-  // -- B×C 环圈（4 条，围绕交点 (40,~95)）--
-  ramps.push(loopRamp('匝道R5·C转B北', C, C.nearestS(150, 190), -1, 52, 262, B));     // 27→18 下
-  ramps.push(loopRamp('匝道R6·B北转C', B, B.nearestS(40, 0), +1, 52, 262, C));        // 18→27 上
-  ramps.push(loopRamp('匝道R7·C转B南', C, C.nearestS(-60, 10), +1, 52, 262, B));      // 27→18 下
-  ramps.push(loopRamp('匝道R8·B南转C', B, B.nearestS(40, 190), -1, 52, 262, C));      // 18→27 上
+  // -- B×C 环圈（4 条，围绕交点 (40,~95)；半径 40 与 A×B 环圈（52）几何分离，
+  //    两组圆环互不相交，杜绝三重编织区的高度震荡）
+  ramps.push(loopRamp('匝道R5·C转B北', C, C.nearestS(150, 190), -1, 40, 262, B));     // 27→18 下
+  ramps.push(loopRamp('匝道R6·B北转C', B, B.nearestS(40, 0), +1, 40, 262, C));        // 18→27 上
+  ramps.push(loopRamp('匝道R7·C转B南', C, C.nearestS(-60, 10), +1, 40, 262, B));      // 27→18 下
+  ramps.push(loopRamp('匝道R8·B南转C', B, B.nearestS(40, 190), -1, 40, 262, C));      // 18→27 上
 
   // -- C×D 定向半直接匝道（4 条，大 S 曲线）--
   const direct = (name, fromRoad, s0, toRoad, s1, ext = 110) => {
@@ -281,7 +349,7 @@ export function buildNetwork() {
     // 引道：G1 → 螺旋起点（起点外移到 G1 路缘，终点切向 = 螺旋起点切向）
     const c2L = head.p.clone().addScaledVector(head.tan, -30);
     const s0L = Math.sign(crossY(aG.tan, c2L.clone().sub(aG.p))) || 1;
-    const offL = aG.side.clone().multiplyScalar(-s0L * (aG.half + RAMP_HALF + 0.3));
+    const offL = aG.side.clone().multiplyScalar(-s0L * (aG.half + RAMP_HALF - 0.3));
     const startL = aG.p.clone().add(offL);
     const leadPts = bezierRoad(startL, startL.clone().addScaledVector(aG.tan, 40),
       c2L, head.p, 5);
@@ -318,6 +386,18 @@ export function buildNetwork() {
 
   // 净空松驰：把中途跨越净空不足的匝道推到安全高度
   const net = { mains, ramps, grounds, all: [...grounds, ...mains, ...ramps] };
+  // 主线末端 → 最近城市干道路口（驾驶与 AI 车流在尽头自动转入干道，不再凭空消失）
+  for (const m of mains) {
+    const end = m.pts[m.pts.length - 1];
+    let best = null, bd = Infinity;
+    for (const g of grounds) {
+      const sg = g.nearestS(end.x, end.z);
+      const p = g.pts[g._seg(sg)];
+      const d2 = (p.x - end.x) ** 2 + (p.z - end.z) ** 2;
+      if (d2 < bd) { bd = d2; best = { road: g, s: sg }; }
+    }
+    if (best && Math.sqrt(bd) < 22) m.merge = best;
+  }
   relaxClearances(net);
   return net;
 }
@@ -336,7 +416,7 @@ function buildSampleMap(all, cell = 22) {
   for (const r of all) {
     for (let i = 0; i < r.pts.length; i++) {
       const p = r.pts[i];
-      add({ x: p.x, z: p.z, y: p.y, half: r.width / 2, road: r });
+      add({ x: p.x, z: p.z, y: p.y, half: r.width / 2, road: r, idx: i });
     }
   }
   const near = (x, z, rad) => {
@@ -359,14 +439,22 @@ function rebuildMap(all, sampler) {
 }
 
 // 匝道中途跨越其它道路时高度不足 → 沿程推高/压低到安全净空（主线/地面路固定，只动匝道）
+// 推挤方向由「初始高度关系」锁定，避免两路高度接近时每轮翻向造成震荡
 export function relaxClearances(net) {
+  const origY = new Map();
+  for (const r of net.all) {
+    const a = new Float32Array(r.pts.length);
+    for (let i = 0; i < r.pts.length; i++) a[i] = r.pts[i].y;
+    origY.set(r, a);
+  }
   let sampler = buildSampleMap(net.all);
-  for (let pass = 0; pass < 5; pass++) {
+  for (let pass = 0; pass < 6; pass++) {
     let changed = 0;
     for (let ri = 0; ri < net.ramps.length; ri++) {
       const R = net.ramps[ri];
       const n = R.pts.length;
       const dy = new Float32Array(n);
+      const rOrig = origY.get(R) || null;
       for (let i = 0; i < n; i++) {
         const p = R.pts[i];
         const s = R.cum[i];
@@ -381,12 +469,12 @@ export function relaxClearances(net) {
           if (Math.abs(p.y - q.y) >= CLEAR) continue;
           let need;
           if (q.y < 1) need = q.y + CLEAR;            // 地面路：只能从上方跨
-          else if (p.y > q.y) need = q.y + CLEAR;      // 本来在上方 → 抬到安全高
+          else if (p.y > q.y) need = q.y + CLEAR;      // 当前在上方 → 抬到安全高
           else {
-            need = q.y - CLEAR;                        // 本来在下方 → 压到安全低
+            need = q.y - CLEAR;                        // 当前在下方 → 压到安全低
             if (need < 1.2) need = q.y + CLEAR;        // 压不下去就翻到上方
           }
-          need += p.y > q.y ? OVERSHOOT : -OVERSHOOT;  // 过冲补偿平滑稀释
+          need += (p.y > q.y ? 1 : -1) * OVERSHOOT;    // 过冲补偿平滑稀释
           const d = need - p.y;
           dy[i] = d > 0 ? Math.max(dy[i], d) : Math.min(dy[i], d);
         }
@@ -414,6 +502,7 @@ export function relaxClearances(net) {
       net.ramps[ri] = nr;
       const ia = net.all.indexOf(R);
       if (ia >= 0) net.all[ia] = nr;
+      origY.set(nr, rOrig || new Float32Array(nr.pts.length).fill(0));
       changed++;
     }
     if (!changed) break;

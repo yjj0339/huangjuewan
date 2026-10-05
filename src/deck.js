@@ -1,6 +1,6 @@
 // 桥面几何：沿道路中心线扫描横断面 → 沥青桥面 + 混凝土边梁腹板 + 护栏 + 中央分隔墙；
 // 桥墩：锥形方柱 + 盖梁 + 基座，自动避让下方穿越的其它桥面。
-import * as THREE from '../vendor/three.module.js?v=32';
+import * as THREE from '../vendor/three.module.js?v=33';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -127,6 +127,23 @@ export function buildDeck(road, mats) {
   return geo;
 }
 
+// 断面封口扇（封闭断面在端点不再露出空心）
+function capFan(buffers, frame, loop, atEnd, matIdx) {
+  const nrm = frame.tan.clone().multiplyScalar(atEnd ? 1 : -1);
+  const world = loop.map(pr => frame.p.clone().addScaledVector(frame.side, pr.u).addScaledVector(UP, pr.v));
+  for (let i = 1; i < world.length - 1; i++) {
+    const tri = atEnd ? [world[0], world[i], world[i + 1]] : [world[0], world[i + 1], world[i]];
+    const vBase = buffers.pos.length / 3;
+    for (const p of tri) {
+      buffers.pos.push(p.x, p.y, p.z);
+      buffers.nor.push(nrm.x, nrm.y, nrm.z);
+      buffers.uv.push(0.5, 0.5);
+    }
+    buffers.idx.push(vBase, vBase + 1, vBase + 2);
+    buffers.mat.push(matIdx, matIdx, matIdx);
+  }
+}
+
 function carriagewaySweep(buffers, framesAll, centerOff, cw, mats) {
   // 把 frames 平移到单幅中心（复制 frames 加偏移）
   const frames = framesAll.map(f => ({
@@ -158,6 +175,20 @@ function carriagewaySweep(buffers, framesAll, centerOff, cw, mats) {
         { u: sgn * (w2 + 0.05), v: h }, { u: sgn * (w2 + 0.05), v: h + 0.09 },
         { u: sgn * (w2 - 0.06), v: h + 0.09 }, { u: sgn * (w2 - 0.06), v: h },
       ], null, mats.index.metal, { frames, tileLen: 5, closed: true }, buffers);
+    }
+  }
+  // 端头封口：主体断面 + 护栏断面（起点、终点各一次）
+  const caps = [[frames[0], false], [frames[frames.length - 1], true]];
+  for (const [frame, atEnd] of caps) {
+    capFan(buffers, frame, [
+      { u: -w2, v: 0.02 }, { u: w2, v: 0.02 }, { u: w2 + 0.10, v: -1.30 }, { u: -w2 - 0.10, v: -1.30 },
+    ], atEnd, mats.index.concrete);
+    for (const sgn of [1, -1]) {
+      const x0 = sgn * (w2 - 0.30), x1 = sgn * (w2 + 0.20), xt = sgn * (w2 - 0.02);
+      capFan(buffers, frame, [
+        { u: x0, v: 0 }, { u: x1, v: 0 }, { u: x1, v: 0.10 },
+        { u: xt, v: 0.72 }, { u: sgn * (w2 + 0.02), v: 1.02 }, { u: x0, v: 1.02 },
+      ], atEnd, mats.index.concrete);
     }
   }
 }

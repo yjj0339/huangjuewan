@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=32';
+import * as THREE from '../vendor/three.module.js?v=33';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=32';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=32';
-import { buildDeck, buildPiers } from './deck.js?v=32';
+} from './textures.js?v=33';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=33';
+import { buildDeck, buildPiers } from './deck.js?v=33';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
-} from './props.js?v=32';
-import { Traffic, PlayerCar } from './traffic.js?v=32';
-import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=32';
+} from './props.js?v=33';
+import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=33';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=33';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -58,6 +58,12 @@ const asphaltMat = new THREE.MeshStandardMaterial({ map: asphalt3.tex, roughness
 const concreteMat = new THREE.MeshStandardMaterial({ map: concreteTex, roughness: 0.88, metalness: 0.02 });
 const metalMat = new THREE.MeshStandardMaterial({ color: 0xaab0b6, metalness: 0.85, roughness: 0.38 });
 const mats = { asphalt: asphaltMat, concrete: concreteMat, metal: metalMat, index: { asphalt: 0, concrete: 1, metal: 2 } };
+// 匝道材质：深度偏移，保证与主线重叠汇合处稳定压过主线表面（无缝且不闪烁）
+const rampAsphalt = asphaltMat.clone();
+rampAsphalt.polygonOffset = true; rampAsphalt.polygonOffsetFactor = -2; rampAsphalt.polygonOffsetUnits = -2;
+const rampConcrete = concreteMat.clone();
+rampConcrete.polygonOffset = true; rampConcrete.polygonOffsetFactor = -2; rampConcrete.polygonOffsetUnits = -2;
+const rampMats = { asphalt: rampAsphalt, concrete: rampConcrete, metal: metalMat, index: mats.index };
 
 // ---------- 路网 + 桥梁 ----------
 const net = buildNetwork();
@@ -68,12 +74,11 @@ if (params.get('audit')) {
   document.title = 'AUDIT' + conf.length;
 }
 
-// 沥青纹理按车道数分配：先铺 deck 前给每种 road 绑定纹理（通过材质分组：主/匝道共用3车道贴图，
-// 匝道9m 宽用 2 车道贴图 —— 通过在 buildDeck 里按 road.lanes 换 u 缩放即可，此处简单起见共用）
 const deckGroup = new THREE.Group();
 for (const road of [...net.mains, ...net.ramps]) {
-  const geo = buildDeck(road, mats);
-  const mesh = new THREE.Mesh(geo, [asphaltMat, concreteMat, metalMat]);
+  const mm = road.kind === 'ramp' ? rampMats : mats;
+  const geo = buildDeck(road, mm);
+  const mesh = new THREE.Mesh(geo, [mm.asphalt, mm.concrete, mm.metal]);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   deckGroup.add(mesh);
@@ -137,13 +142,21 @@ const { sun } = makeLighting(scene);
 const clouds = makeClouds(makeCloudSprite(3), makeCloudShadowNoise(7));
 scene.add(clouds);
 
-// ---------- 车流 ----------
-const traffic = new Traffic(net, 1);
-scene.add(traffic.group);
-
-// ---------- 玩家驾驶车 ----------
-const player = new PlayerCar(net);
-scene.add(player.mesh);
+// ---------- 车流 + 玩家驾驶车（异步加载 Blender GLB，失败自动回退方块车） ----------
+let traffic = null;
+let player = null;
+loadCarAssets('./assets/cars/').then((assets) => {
+  traffic = new Traffic(net, 1, assets);
+  scene.add(traffic.group);
+  player = new PlayerCar(net, assets);
+  scene.add(player.mesh);
+  window.__DIAG.cars = traffic.cars.length;
+  if (params.get('drive')) setMode('drive');
+  if (params.get('follow')) {
+    followCar = traffic.cars[(Math.random() * traffic.cars.length) | 0];
+    setMode('follow');
+  }
+});
 
 // ---------- 轨道控制（自制，带阻尼） ----------
 const ctl = {
@@ -254,6 +267,7 @@ const hudHint = document.getElementById('hud-hint');
 const touchPad = document.getElementById('touch-controls');
 
 function setMode(m) {
+  if ((m === 'drive' && !player) || (m === 'follow' && !traffic)) return; // 车辆资源未就绪
   mode = m;
   document.body.classList.toggle('in-car', m === 'drive' || m === 'follow');
   if (m === 'drive') {
@@ -265,7 +279,7 @@ function setMode(m) {
     if (!followCar) followCar = traffic.cars[(Math.random() * traffic.cars.length) | 0];
     ctl.auto = false;
   } else {
-    player.mesh.visible = false;
+    if (player) player.mesh.visible = false;
     followCar = null;
     camera.fov = 52;
     camera.updateProjectionMatrix();
@@ -383,6 +397,7 @@ document.getElementById('drive').addEventListener('click', () => {
 });
 const followBtn = document.getElementById('followRandom');
 followBtn.addEventListener('click', () => {
+  if (!traffic) return;
   followCar = traffic.cars[(Math.random() * traffic.cars.length) | 0];
   setMode('follow');
   hudHint.textContent = '跟随视角：' + followCar.road.name + ' · 点击空白处或按 ESC 退出';
@@ -436,15 +451,10 @@ spinBtn.classList.add('on');
 
 // ---------- 无头截图/诊断钩子 ----------
 window.__READY = false;
-window.__DIAG = { tris: 0, calls: 0, cars: traffic.cars.length, piers: 0, fps: 0 };
+window.__DIAG = { tris: 0, calls: 0, cars: 0, piers: 0, fps: 0 };
 if (params.get('shot')) {
   applyPreset(params.get('shot'));
   ctl.auto = false;
-}
-if (params.get('drive')) setMode('drive');
-if (params.get('follow')) {
-  followCar = traffic.cars[(Math.random() * traffic.cars.length) | 0];
-  setMode('follow');
 }
 if (params.get('run')) input.up = true; // 截图钩子：驾驶模式自动踩油门
 
@@ -502,7 +512,7 @@ function tick() {
     }
   }
 
-  traffic.update(dt * (params.get('speed') ? parseFloat(params.get('speed')) : 1));
+  if (traffic) traffic.update(dt * (params.get('speed') ? parseFloat(params.get('speed')) : 1));
   clouds.userData.tick(dt);
   // 池塘水面微动
   const pond = park.userData.pond;
