@@ -1,25 +1,26 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=36';
+import * as THREE from '../vendor/three.module.js?v=37';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=36';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=36';
-import { buildDeck, buildPiers } from './deck.js?v=36';
+} from './textures.js?v=37';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=37';
+import { buildDeck, buildPiers } from './deck.js?v=37';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
-} from './props.js?v=36';
-import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=36';
-import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=36';
+} from './props.js?v=37';
+import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=37';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=37';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = false; // 阴影隔帧刷新（减半阴影开销）
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.94;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -522,7 +523,7 @@ const clock = new THREE.Clock();
 const UPV = new THREE.Vector3(0, 1, 0);
 const chaseTarget = new THREE.Vector3(), lookPos = new THREE.Vector3();
 const focus = new THREE.Vector3(0, 12, 0);
-let frames = 0, fpsAcc = 0, readyFrames = 0;
+let frames = 0, fpsAcc = 0, readyFrames = 0, frameNo = 0;
 let fpsAvg = 60, pxTier = 0, lastPRChange = 0;
 let hudAcc = 0;
 function applyPR() {
@@ -578,7 +579,7 @@ function tick() {
     engineSound(st.speed);
     if (!params.get('camdbg')) {
       hudTick(dt, st.speed, player.road.name,
-        player.hint || 'W/↑ 油门 · S/↓ 刹车 · A/D 变道（出口提示出现时按 ←/→ 转入匝道）· ESC 退出');
+        player.hint || 'W/↑ 油门 · S/↓ 刹车 · A/D 连续转向（出口提示时向对应方向靠边驶入）· ESC 退出');
     }
   }
 
@@ -594,6 +595,7 @@ function tick() {
   // 太阳阴影相机跟随视野中心
   sun.target.position.copy(focus);
   sun.position.copy(focus).add(new THREE.Vector3(420, 560, 300));
+  renderer.shadowMap.needsUpdate = (frameNo & 1) === 0; // 隔帧刷新阴影
 
   renderer.render(scene, camera);
 
@@ -612,6 +614,7 @@ function tick() {
     }
   }
   frames++;
+  frameNo++;
   fpsAcc += dt;
   if (fpsAcc >= 0.5) {
     window.__DIAG.fps = Math.round(frames / fpsAcc);
@@ -626,11 +629,11 @@ function tick() {
     const nowMs = performance.now();
     if (nowMs - lastPRChange > 2500) {
       if (fpsAvg < 50 && pxTier < 2) { pxTier++; applyPR(); lastPRChange = nowMs; }
-      else if (fpsAvg > 58 && pxTier > 0) { pxTier--; applyPR(); lastPRChange = nowMs; }
+      else if (fpsAvg > 58 && pxTier > 0 && mode === 'orbit') { pxTier--; applyPR(); lastPRChange = nowMs; } // 行车中不升档，避免切换顿挫
     }
   }
-  // 驾驶小地图
-  if (mode !== 'orbit') drawMinimap();
+  // 驾驶小地图（隔帧刷新）
+  if (mode !== 'orbit' && (frameNo & 1) === 0) drawMinimap();
 }
 tick();
 

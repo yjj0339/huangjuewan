@@ -1,8 +1,8 @@
 // 车流 + 玩家驾驶车：Blender GLB 精细车辆（按材质拆分实例化），
 // AI 车流在匝道/主线/地面路之间自动转接，全程连续不凭空消失。
-import * as THREE from '../vendor/three.module.js?v=36';
-import { mergeGeoms } from './deck.js?v=36';
-import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=36';
+import * as THREE from '../vendor/three.module.js?v=37';
+import { mergeGeoms } from './deck.js?v=37';
+import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=37';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const KINDS = ['sedan', 'suv', 'bus', 'truck'];
@@ -300,24 +300,36 @@ export class PlayerCar {
       this.mesh.castShadow = true;
     }
     this.mesh.visible = false;
+    // 出口登记（带方位）：side = 匝道在主线的哪一侧（+1 右 / −1 左）
     this.exitsByRoad = new Map();
     for (const r of roads.ramps) {
       if (!r.exit) continue;
+      const fr = r.exit.road.frameAt(r.exit.s);
+      const rp = r.frameAt(2);
+      const side = rp.p.clone().sub(fr.p).dot(fr.side) >= 0 ? 1 : -1;
       const arr = this.exitsByRoad.get(r.exit.road) || [];
-      arr.push({ s: r.exit.s, ramp: r });
+      arr.push({ s: r.exit.s, ramp: r, side });
       this.exitsByRoad.set(r.exit.road, arr);
     }
     for (const arr of this.exitsByRoad.values()) arr.sort((a, b) => a.s - b.s);
     this.road = roads.mains[0];
     this.s = this.road.length * 0.42;
-    this.lane = 2;
-    this.laneOff = laneOffsetsOf(this.road)[2] || 0;
+    this.laneOff = 4.0;
     this.speed = 0;
     this.hint = '';
   }
   worldPos() {
     const f = this.road.frameAt(this.s);
     return f.p.clone().addScaledVector(f.side, this.laneOff);
+  }
+  // 当前道路的可行横向范围（连续自由驾驶，u 从中线量起；双幅只在本侧幅内）
+  uRange(road) {
+    const half = road.width / 2;
+    if (road.carriageways === 'dual') {
+      const cw = (road.width - road.median) / 2;
+      return [road.median / 2 + 1.1, road.median / 2 + cw - 0.6];
+    }
+    return [-half + 1.0, half - 1.0];
   }
   place(road) {
     this.road = road || this.roads.mains[0];
@@ -334,26 +346,20 @@ export class PlayerCar {
       }
     }
     this.s = s;
-    this.lane = this.road.carriageways === 'dual' ? this.road.lanes - 1 : 1;
-    this.laneOff = laneOffsetsOf(this.road)[this.lane];
+    const [uMin] = this.uRange(this.road);
+    this.laneOff = uMin + 3.0;
     this.speed = 0;
     this.mesh.visible = true;
   }
-  // 切换线路：用世界坐标反算新路侧向偏移，位置连续不跳变
+  // 切换线路：用世界坐标反算新路侧向偏移（位置零跳变）
   switchRoad(r, s) {
     const oldPos = this.worldPos();
     this.road = r;
     this.s = clamp(s, 1, r.length - 1);
     const f = this.road.frameAt(this.s);
     const lat = oldPos.clone().sub(f.p).dot(f.side);
-    this.laneOff = clamp(lat, -this.road.width / 2 + 1.0, this.road.width / 2 - 1.0);
-    const offs = laneOffsetsOf(this.road);
-    let bi = 0, bd = Infinity;
-    for (let i = 0; i < offs.length; i++) {
-      const d = Math.abs(offs[i] - Math.max(0, this.laneOff));
-      if (d < bd) { bd = d; bi = i; }
-    }
-    this.lane = this.road.carriageways === 'dual' ? bi : clamp(bi, 0, offs.length - 1);
+    const [uMin, uMax] = this.uRange(this.road);
+    this.laneOff = clamp(lat, uMin, uMax);
   }
   update(dt, input) {
     const road = this.road;
@@ -364,25 +370,26 @@ export class PlayerCar {
     this.speed = clamp(this.speed, 0, limit);
     this.s += this.speed * dt;
 
-    const offsets = laneOffsetsOf(road);
+    // 连续自由转向：左右键平滑改变横向位置（整幅路面任你开）
+    const [uMin, uMax] = this.uRange(road);
+    const steerRate = 5.2;
+    if (input.turn !== 0) {
+      this.laneOff = clamp(this.laneOff + input.turn * steerRate * dt, uMin, uMax);
+    }
+    // 出口：必须在出口窗口内、处于对应侧的外缘、且持续向该侧转向 → 平滑驶入匝道
     let taking = null;
+    this.hint = '';
     for (const ex of (this.exitsByRoad.get(road) || [])) {
-      if (this.s > ex.s - 30 && this.s < ex.s + 10) {
-        this.hint = '按 ← / → 转入 ' + ex.ramp.name;
-        if (input.turn !== 0) { taking = ex; input.turn = 0; }
-        break;
+      if (this.s > ex.s - 48 && this.s < ex.s + 14) {
+        const edgeU = ex.side > 0 ? uMax : uMin;
+        const nearEdge = Math.abs(this.laneOff - edgeU) < 4.2;
+        this.hint = `前方${ex.side > 0 ? '右' : '左'}侧出口：向${ex.side > 0 ? '右' : '左'}靠边驶入 ${ex.ramp.name}`;
+        if (nearEdge && input.turn === ex.side && this.speed > 3) { taking = ex; break; }
       }
     }
     if (taking) {
-      this.switchRoad(taking.ramp, 1);
+      this.switchRoad(taking.ramp, 8);
       this.hint = '已驶入 ' + taking.ramp.name;
-    } else {
-      if (this.s <= road.length - 1) {
-        if (input.turn !== 0) { this.lane = clamp(this.lane + input.turn, 0, offsets.length - 1); input.turn = 0; }
-        this.hint = '';
-      }
-      const target = offsets[clamp(this.lane, 0, offsets.length - 1)];
-      this.laneOff += (target - this.laneOff) * Math.min(1, dt * 4);
     }
     // 线路末端：匝道→主线 / 主线→城市干道，位置连续
     if (!taking && this.s >= road.length - 0.5) {
