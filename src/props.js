@@ -1,6 +1,6 @@
 // 附属设施：路灯、交通标志（门架+立柱牌）、地面道路、公园绿地、乔灌木、远景城市
-import * as THREE from '../vendor/three.module.js';
-import { mergeGeoms } from './deck.js';
+import * as THREE from '../vendor/three.module.js?v=31';
+import { mergeGeoms } from './deck.js?v=31';
 
 const UP = new THREE.Vector3(0, 1, 0);
 

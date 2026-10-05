@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js';
+import * as THREE from '../vendor/three.module.js?v=31';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js';
-import { buildDeck, buildPiers } from './deck.js';
+} from './textures.js?v=31';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=31';
+import { buildDeck, buildPiers } from './deck.js?v=31';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark,
-} from './props.js';
-import { Traffic, PlayerCar } from './traffic.js';
-import { makeSky, makeLighting, makeClouds, makeOuterGround } from './env.js';
+} from './props.js?v=31';
+import { Traffic, PlayerCar } from './traffic.js?v=31';
+import { makeSky, makeLighting, makeClouds, makeOuterGround } from './env.js?v=31';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });

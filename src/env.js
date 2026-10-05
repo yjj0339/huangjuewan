@@ -1,5 +1,5 @@
 // 环境：渐变天空穹顶、太阳直射光+半球光、雾、云朵与移动云影
-import * as THREE from '../vendor/three.module.js';
+import * as THREE from '../vendor/three.module.js?v=31';
 
 export function makeSky() {
   const geo = new THREE.SphereGeometry(5200, 32, 16);

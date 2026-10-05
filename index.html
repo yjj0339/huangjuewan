@@ -147,15 +147,28 @@
 
 <div id="loading"><h2>正在架设立交桥…</h2><div class="bar"><i></i></div></div>
 
+<script>
+  // 模块加载失败兜底：提示强刷而不是无限等待
+  window.addEventListener('error', (e) => {
+    if (!window.__READY && e.message) {
+      const h = document.querySelector('#loading h2');
+      if (h) h.textContent = '加载失败：请按 Ctrl+F5 强制刷新（浏览器缓存了旧版本）';
+    }
+  }, true);
+</script>
 <script type="module">
-  import './src/main.js';
+  import './src/main.js?v=31';
   // 场景首帧渲染完成后淡出加载页
   const t0 = performance.now();
   const wait = setInterval(() => {
-    if (window.__READY || performance.now() - t0 > 12000) {
+    if (window.__READY) {
       const el = document.getElementById('loading');
       el.style.opacity = '0';
       setTimeout(() => el.remove(), 650);
+      clearInterval(wait);
+    } else if (performance.now() - t0 > 12000) {
+      const h = document.querySelector('#loading h2');
+      if (h) h.textContent = '加载较慢，请按 Ctrl+F5 强制刷新重试';
       clearInterval(wait);
     }
   }, 120);
