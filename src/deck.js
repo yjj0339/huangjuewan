@@ -1,6 +1,6 @@
 // 桥面几何：沿道路中心线扫描横断面 → 沥青桥面 + 混凝土边梁腹板 + 护栏 + 中央分隔墙；
 // 桥墩：锥形方柱 + 盖梁 + 基座，自动避让下方穿越的其它桥面。
-import * as THREE from '../vendor/three.module.js?v=34';
+import * as THREE from '../vendor/three.module.js?v=35';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -43,8 +43,9 @@ export function mergeGeoms(items) {
 
 // ---- 断面扫描 ----
 // profile: [{u,v}] 折线（u=横向偏移, v=相对桥面顶面高度），open 或 closed
+// opts.skipAt(s) 返回 true 时跳过该行（用于护栏豁口等）
 function sweep(profile, road, matIdx, opts, buffers) {
-  const { frames, tileLen = 6, uScale = 1, closed = false } = opts;
+  const { frames, tileLen = 6, uScale = 1, closed = false, skipAt = null } = opts;
   const n = frames.length;
   const m = profile.length;
   const segs = closed ? m : m - 1;
@@ -53,6 +54,7 @@ function sweep(profile, road, matIdx, opts, buffers) {
     const edgeLen = Math.hypot(b.u - a.u, b.v - a.v) || 0.001;
     for (let i = 0; i < n - 1; i++) {
       const f0 = frames[i], f1 = frames[i + 1];
+      if (skipAt && skipAt(f0.s)) continue;
       const vBase = buffers.pos.length / 3;
       const corners = [
         [a, f0], [b, f0], [b, f1], [a, f1],
@@ -102,13 +104,13 @@ export function buildDeck(road, mats) {
     const cw = (road.width - road.median) / 2; // 单幅宽
     const off = road.median / 2 + cw / 2;
     for (const sgn of [1, -1]) {
-      carriagewaySweep(buffers, frames, sgn * off, cw, mats);
+      carriagewaySweep(buffers, frames, sgn * off, cw, mats, road.openings);
     }
     // 中央分隔墙
     sweep([{ u: -0.42, v: 0 }, { u: 0.42, v: 0 }, { u: 0.30, v: 0.95 }, { u: -0.30, v: 0.95 }],
       null, mats.index.concrete, { frames, tileLen: 8, closed: true }, buffers);
   } else {
-    carriagewaySweep(buffers, frames, 0, road.width, mats);
+    carriagewaySweep(buffers, frames, 0, road.width, mats, road.openings);
   }
 
   const geo = new THREE.BufferGeometry();
@@ -144,7 +146,7 @@ function capFan(buffers, frame, loop, atEnd, matIdx) {
   }
 }
 
-function carriagewaySweep(buffers, framesAll, centerOff, cw, mats) {
+function carriagewaySweep(buffers, framesAll, centerOff, cw, mats, openings = null) {
   // 把 frames 平移到单幅中心（复制 frames 加偏移）
   const frames = framesAll.map(f => ({
     s: f.s, p: f.p.clone().addScaledVector(f.side, centerOff),
@@ -161,29 +163,32 @@ function carriagewaySweep(buffers, framesAll, centerOff, cw, mats) {
     { frames, tileLen: 7, closed: false }, buffers);
   sweep([{ u: -w2 - 0.10, v: -1.30 }, { u: -w2, v: 0 }], null, mats.index.concrete,
     { frames, tileLen: 7, closed: false }, buffers);
-  // 两侧混凝土护栏（封闭断面）+ 金属横栏
+  // 两侧混凝土护栏（封闭断面）+ 金属横栏（分流/汇合点按 openings 开豁口）
+  const openAt = (sgn, s) => openings && openings.some(o => o.side === sgn && Math.abs(s - o.s) < o.half);
   for (const sgn of [1, -1]) {
     const x0 = sgn * (w2 - 0.30), x1 = sgn * (w2 + 0.20), xt = sgn * (w2 - 0.02);
     const prof = [
       { u: x0, v: 0 }, { u: x1, v: 0 }, { u: x1, v: 0.10 },
       { u: xt, v: 0.72 }, { u: sgn * (w2 + 0.02), v: 1.02 }, { u: x0, v: 1.02 },
     ];
-    sweep(prof, null, mats.index.concrete, { frames, tileLen: 5, closed: true }, buffers);
+    const skip = (s) => openAt(sgn, s);
+    sweep(prof, null, mats.index.concrete, { frames, tileLen: 5, closed: true, skipAt: skip }, buffers);
     // 金属栏（两道薄管矩形）
     for (const h of [1.22, 0.86]) {
       sweep([
         { u: sgn * (w2 + 0.05), v: h }, { u: sgn * (w2 + 0.05), v: h + 0.09 },
         { u: sgn * (w2 - 0.06), v: h + 0.09 }, { u: sgn * (w2 - 0.06), v: h },
-      ], null, mats.index.metal, { frames, tileLen: 5, closed: true }, buffers);
+      ], null, mats.index.metal, { frames, tileLen: 5, closed: true, skipAt: skip }, buffers);
     }
   }
-  // 端头封口：主体断面 + 护栏断面（起点、终点各一次）
+  // 端头封口：主体断面 + 护栏断面（起点、终点各一次；护栏被豁口覆盖时不再封口）
   const caps = [[frames[0], false], [frames[frames.length - 1], true]];
   for (const [frame, atEnd] of caps) {
     capFan(buffers, frame, [
       { u: -w2, v: 0.02 }, { u: w2, v: 0.02 }, { u: w2 + 0.10, v: -1.30 }, { u: -w2 - 0.10, v: -1.30 },
     ], atEnd, mats.index.concrete);
     for (const sgn of [1, -1]) {
+      if (openAt(sgn, frame.s)) continue;
       const x0 = sgn * (w2 - 0.30), x1 = sgn * (w2 + 0.20), xt = sgn * (w2 - 0.02);
       capFan(buffers, frame, [
         { u: x0, v: 0 }, { u: x1, v: 0 }, { u: x1, v: 0.10 },

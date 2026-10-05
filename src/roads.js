@@ -2,7 +2,7 @@
 // 层1 地面道路 G | 层2 主线A y=9 | 层3 主线B y=18 | 层4 主线C y=27 | 层5 主线D y=36
 // 匝道两端通过"锚点自动对接"生成：起点/终点直接吸附到目标道路的采样点，位置、
 // 标高、切向自动吻合，保证结构上真正互通。
-import * as THREE from '../vendor/three.module.js?v=34';
+import * as THREE from '../vendor/three.module.js?v=35';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -104,10 +104,10 @@ export function endDescent(pts, dropLen = 320, yGround = 0.4) {
   const n0 = pts.length;
   const d = pts[n0 - 1].clone().sub(pts[n0 - 8]).setY(0).normalize();
   const y0 = pts[n0 - 1].y;
-  // 目标长度：至少降完坡再多走 30m；若前方有干道则停在路口过线 12m 处
+  // 目标长度：至少降完坡再多走 20m；若前方有干道则停在路口过线 2m 处
   const cross = rayCityCross(pts[n0 - 1], d);
   const totalLen = cross !== null
-    ? Math.max(dropLen + 20, cross + 12)
+    ? Math.max(dropLen + 20, cross + 2)
     : dropLen + 60;
   const n = Math.max(10, Math.round(totalLen / 7));
   for (let i = 1; i <= n; i++) {
@@ -124,7 +124,7 @@ export function headDescent(pts, dropLen = 320, yGround = 0.4) {
   const y0 = pts[0].y;
   const cross = rayCityCross(pts[0], d);
   const totalLen = cross !== null
-    ? Math.max(dropLen + 20, cross + 12)
+    ? Math.max(dropLen + 20, cross + 2)
     : dropLen + 60;
   const n = Math.max(10, Math.round(totalLen / 7));
   const head = [];
@@ -396,10 +396,41 @@ export function buildNetwork() {
       const d2 = (p.x - end.x) ** 2 + (p.z - end.z) ** 2;
       if (d2 < bd) { bd = d2; best = { road: g, s: sg }; }
     }
-    if (best && Math.sqrt(bd) < 22) m.merge = best;
+    if (best && Math.sqrt(bd) < 22) {
+      m.merge = best;
+      // 终点路口：两侧护栏都开豁口（路口不设护栏）
+      regOpening(m, 1, m.length, 26);
+      regOpening(m, -1, m.length, 26);
+    }
+  }
+  // 护栏豁口登记：所有匝道↔主线的分流/汇合点，双方对应侧都开口（车辆与视觉真正互通）
+  for (const r of ramps) {
+    if (r.exit) {
+      const f = r.exit.road.frameAt(r.exit.s);
+      const rp = r.frameAt(2);
+      const uParent = rp.p.clone().sub(f.p).dot(f.side);        // 主线相对匝道的方位
+      regOpening(r, uParent >= 0 ? 1 : -1, 0.5, 45);
+      const uRamp = f.p.clone().sub(rp.p).dot(rp.side);          // 匝道相对主线的方位
+      regOpening(r.exit.road, uRamp >= 0 ? 1 : -1, r.exit.s, 48);
+    }
+    if (r.merge) {
+      const f = r.merge.road.frameAt(r.merge.s);
+      const rp = r.frameAt(r.length - 2);
+      const uParent = rp.p.clone().sub(f.p).dot(f.side);
+      regOpening(r, uParent >= 0 ? 1 : -1, r.length, 60);
+      const uRamp = f.p.clone().sub(rp.p).dot(rp.side);
+      regOpening(r.merge.road, uRamp >= 0 ? 1 : -1, r.merge.s, 60);
+    }
   }
   relaxClearances(net);
   return net;
+}
+
+// 给道路登记一段护栏豁口（side: 本路 frame 的左右；s: 中点弧长；half: 半长）
+function regOpening(road, side, s, half) {
+  if (!road || road.kind === 'ground') return;
+  if (!road.openings) road.openings = [];
+  road.openings.push({ side, s, half });
 }
 
 // ---------- 净空松驰与审计 ----------
@@ -499,6 +530,7 @@ export function relaxClearances(net) {
       for (let i = 0; i < n; i++) R.pts[i].y = Math.max(0.45, R.pts[i].y + dy[i]);
       const nr = new Road(R.name, R.kind, R.level, { carriageways: 'single', lanes: 2 }, R.pts);
       nr.exit = R.exit; nr.merge = R.merge;
+      nr.openings = R.openings;
       net.ramps[ri] = nr;
       const ia = net.all.indexOf(R);
       if (ia >= 0) net.all[ia] = nr;
