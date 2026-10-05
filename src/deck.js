@@ -1,6 +1,6 @@
 // 桥面几何：沿道路中心线扫描横断面 → 沥青桥面 + 混凝土边梁腹板 + 护栏 + 中央分隔墙；
 // 桥墩：锥形方柱 + 盖梁 + 基座，自动避让下方穿越的其它桥面。
-import * as THREE from '../vendor/three.module.js?v=39';
+import * as THREE from '../vendor/three.module.js?v=40';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -113,13 +113,13 @@ export function buildDeck(road, mats) {
     const cw = (road.width - road.median) / 2; // 单幅宽
     const off = road.median / 2 + cw / 2;
     for (const sgn of [1, -1]) {
-      carriagewaySweep(buffers, frames, sgn * off, cw, mats, road.openings);
+      carriagewaySweep(buffers, frames, sgn * off, cw, mats, road.openings, road);
     }
     // 中央分隔墙
     sweep([{ u: -0.42, v: 0 }, { u: 0.42, v: 0 }, { u: 0.30, v: 0.95 }, { u: -0.30, v: 0.95 }],
       null, mats.index.concrete, { frames, tileLen: 8, closed: true }, buffers);
   } else {
-    carriagewaySweep(buffers, frames, 0, road.width, mats, road.openings);
+    carriagewaySweep(buffers, frames, 0, road.width, mats, road.openings, road);
   }
 
   const geo = new THREE.BufferGeometry();
@@ -155,12 +155,24 @@ function capFan(buffers, frame, loop, atEnd, matIdx) {
   }
 }
 
-function carriagewaySweep(buffers, framesAll, centerOff, cw, mats, openings = null) {
+function carriagewaySweep(buffers, framesAll, centerOff, cw, mats, openings = null, road = null) {
   // 把 frames 平移到单幅中心（复制 frames 加偏移）
   const frames = framesAll.map(f => ({
     s: f.s, p: f.p.clone().addScaledVector(f.side, centerOff),
     tan: f.tan, side: f.side,
   }));
+  // 主线外侧隔音屏（正宗城市高架样式；分流/汇合豁口与路口处断开）
+  if (road && road.kind === 'main' && mats.index.barrier !== undefined) {
+    const bSkip = (sgn, s) => openings && openings.some(o => o.side === sgn && Math.abs(s - o.s) < o.half);
+    for (const sgn of [1, -1]) {
+      const xe = sgn * (cw / 2 - 0.45);
+      const bskip = (s) => bSkip(sgn, s);
+      sweep([
+        { u: xe, v: 0.12 }, { u: xe + sgn * 0.07, v: 0.12 },
+        { u: xe + sgn * 0.07, v: 3.05 }, { u: xe, v: 3.05 },
+      ], null, mats.index.barrier, { frames, tileLen: 8, closed: true, skipAt: bskip }, buffers);
+    }
+  }
   const w2 = cw / 2;
   // 沥青顶面
   sweep([{ u: -w2, v: 0.02 }, { u: w2, v: 0.02 }], null, mats.index.asphalt,

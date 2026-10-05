@@ -1,6 +1,6 @@
 // 附属设施：路灯、交通标志（门架+立柱牌）、地面道路、公园绿地、乔灌木、远景城市
-import * as THREE from '../vendor/three.module.js?v=39';
-import { mergeGeoms } from './deck.js?v=39';
+import * as THREE from '../vendor/three.module.js?v=40';
+import { mergeGeoms } from './deck.js?v=40';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -39,6 +39,14 @@ export function placeLamps(roads, lampsGeo, grid) {
     const half = road.width / 2;
     for (let s = 14; s < road.length - 10; s += gap) {
       const f = road.frameAt(s);
+      if (road.kind === 'main') {
+        // 中分带双臂路灯（正宗城市高架样式）：两灯背靠背立在中央分隔带
+        if (grid && blockedAbove(grid, f.p, f.p.y, 7, 11)) continue;
+        const heading = Math.atan2(f.tan.x, f.tan.z);
+        items.push({ pos: f.p.clone(), rotY: heading + Math.PI / 2 });
+        items.push({ pos: f.p.clone(), rotY: heading - Math.PI / 2 });
+        continue;
+      }
       for (const sgn of (road.kind === 'ramp' ? [1] : [1, -1])) {
         const base = f.p.clone().addScaledVector(f.side, sgn * (half + 0.5));
         // 上方 11m 内有别的桥面经过 → 灯杆会戳穿它，跳过
@@ -48,7 +56,7 @@ export function placeLamps(roads, lampsGeo, grid) {
         const rotY = Math.atan2(-d.z, d.x);
         items.push({
           pos: base, rotY,
-          lift: road.kind === 'main' ? 0 : 0,
+          lift: 0,
         });
       }
     }

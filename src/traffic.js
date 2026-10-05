@@ -1,8 +1,8 @@
 // 车流 + 玩家驾驶车：Blender GLB 精细车辆（按材质拆分实例化），
 // AI 车流在匝道/主线/地面路之间自动转接，全程连续不凭空消失。
-import * as THREE from '../vendor/three.module.js?v=39';
-import { mergeGeoms } from './deck.js?v=39';
-import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=39';
+import * as THREE from '../vendor/three.module.js?v=40';
+import { mergeGeoms } from './deck.js?v=40';
+import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=40';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const KINDS = ['sedan', 'suv', 'bus', 'truck'];
@@ -36,11 +36,23 @@ export async function loadCarAssets(basePath) {
         const mn = (o.material && o.material.name) || 'trim';
         (byMat[mn] = byMat[mn] || []).push(g);
       });
-      const parts = {};
+      // 归并为两组：paint（instanceColor 上色）+ rest（细节件按材质色烘焙进顶点色）
+      // → 每车型只有 2 个实例缓冲，逐帧上传量降为 1/6
+      const DETAIL_COLORS = {
+        glass: 0x1a2732, trim: 0x17191c, chrome: 0xb9c0c6,
+        light: 0xe8ecef, tail: 0x8c1a12, cargo: 0xd4d7da,
+      };
+      const paintGs = byMat.paint || [];
+      const restItems = [];
       for (const [mn, gs] of Object.entries(byMat)) {
-        parts[mn] = mergeGeoms(gs.map((g) => ({ geo: g })));
+        if (mn === 'paint') continue;
+        const c = new THREE.Color(DETAIL_COLORS[mn] || 0x17191c);
+        for (const g of gs) restItems.push({ geo: g, color: c.getHex() });
       }
-      out[k] = parts;
+      out[k] = {
+        paint: paintGs.length ? mergeGeoms(paintGs.map((g) => ({ geo: g }))) : null,
+        rest: restItems.length ? mergeGeoms(restItems) : null,
+      };
     } catch (err) {
       out[k] = null; // 加载失败 → 回退方块车
     }
@@ -161,24 +173,33 @@ export class Traffic {
     const col = new THREE.Color();
     for (const [kName, list] of Object.entries(byKind)) {
       const parts = assets && assets[kName];
-      if (parts) {
-        for (const [mn, geo] of Object.entries(parts)) {
-          const mat = CAR_MATS[mn] || CAR_MATS.trim;
-          const inst = new THREE.InstancedMesh(geo, mat, list.length);
-          inst.castShadow = mn !== 'glass';
+      if (parts && (parts.paint || parts.rest)) {
+        // 两组实例：paint（实例色车漆）+ rest（细节件，材质色烘焙顶点色）
+        const paintInst = parts.paint
+          ? new THREE.InstancedMesh(parts.paint,
+            new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.78, roughness: 0.3 }), list.length)
+          : null;
+        const restInst = parts.rest
+          ? new THREE.InstancedMesh(parts.rest,
+            new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.5, roughness: 0.42 }), list.length)
+          : null;
+        for (const inst of [paintInst, restInst]) {
+          if (!inst) continue;
+          inst.castShadow = true;
           inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
           inst.userData.cars = list;
           this.group.add(inst);
           this.insts.push(inst);
-          for (let i = 0; i < list.length; i++) {
-            list[i].parts = list[i].parts || [];
-            list[i].parts.push({ inst, idx: i });
-            if (mn === 'paint') {
-              const pal = (kName === 'bus' || kName === 'truck') ? BUS_PALETTE : PALETTE;
-              col.setHex(pal[(Math.random() * pal.length) | 0]);
-              inst.setColorAt(i, col);
-            }
+        }
+        const pal = (kName === 'bus' || kName === 'truck') ? BUS_PALETTE : PALETTE;
+        for (let i = 0; i < list.length; i++) {
+          list[i].parts = [];
+          if (paintInst) {
+            list[i].parts.push({ inst: paintInst, idx: i });
+            col.setHex(pal[(Math.random() * pal.length) | 0]);
+            paintInst.setColorAt(i, col);
           }
+          if (restInst) list[i].parts.push({ inst: restInst, idx: i });
         }
       } else {
         const inst = new THREE.InstancedMesh(carGeo(kName),
@@ -291,15 +312,19 @@ export class PlayerCar {
     this.traffic = traffic;
     this.roads = roads;
     const parts = assets && assets.sedan;
-    if (parts) {
+    if (parts && (parts.paint || parts.rest)) {
       this.mesh = new THREE.Group();
-      for (const [mn, geo] of Object.entries(parts)) {
-        const mat = mn === 'paint'
-          ? new THREE.MeshStandardMaterial({ color: 0xff7a1f, metalness: 0.7, roughness: 0.28 })
-          : (CAR_MATS[mn] || CAR_MATS.trim);
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.castShadow = true;
-        this.mesh.add(mesh);
+      if (parts.paint) {
+        const m = new THREE.Mesh(parts.paint,
+          new THREE.MeshStandardMaterial({ color: 0xff7a1f, metalness: 0.78, roughness: 0.28 }));
+        m.castShadow = true;
+        this.mesh.add(m);
+      }
+      if (parts.rest) {
+        const m = new THREE.Mesh(parts.rest,
+          new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.55, roughness: 0.4 }));
+        m.castShadow = true;
+        this.mesh.add(m);
       }
     } else {
       this.mesh = new THREE.Mesh(carGeo('sedan'),
@@ -383,6 +408,11 @@ export class PlayerCar {
     if (input.turn !== 0) {
       this.laneOff = clamp(this.laneOff + input.turn * steerRate * dt, uMin, uMax);
     }
+    // 转向视觉偏航：横向速度让车头真"转"过去（不再平移滑动）
+    const latVel = (this.laneOff - (this._pu ?? this.laneOff)) / Math.max(dt, 1e-3);
+    this._pu = this.laneOff;
+    const slipTarget = clamp(-Math.atan2(latVel, Math.max(this.speed, 4)), -0.3, 0.3);
+    this._yaw = (this._yaw || 0) + (slipTarget - (this._yaw || 0)) * Math.min(1, dt * 7);
     // 出口：出口前 160m 开始提示；处于对应侧的外缘、且持续向该侧转向 → 平滑驶入匝道
     let taking = null;
     this.hint = '';
@@ -429,8 +459,10 @@ export class PlayerCar {
     const pos = f.p.clone().addScaledVector(f.side, this.laneOff);
     const fwd = f.tan.clone();
     const q = new THREE.Quaternion().setFromUnitVectors(V3(0, 0, 1), fwd);
+    q.multiply(new THREE.Quaternion().setFromAxisAngle(V3(0, 1, 0), this._yaw || 0)); // 转向偏航
     this.mesh.position.copy(pos);
     this.mesh.quaternion.copy(q);
-    return { pos, fwd, speed: this.speed };
+    const fwdYaw = fwd.clone().applyAxisAngle(V3(0, 1, 0), (this._yaw || 0) * 0.5);
+    return { pos, fwd: fwdYaw, speed: this.speed };
   }
 }

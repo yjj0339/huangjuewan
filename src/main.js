@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=39';
+import * as THREE from '../vendor/three.module.js?v=40';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=39';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=39';
-import { buildDeck, buildPiers } from './deck.js?v=39';
+} from './textures.js?v=40';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=40';
+import { buildDeck, buildPiers } from './deck.js?v=40';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
-} from './props.js?v=39';
-import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=39';
-import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=39';
+} from './props.js?v=40';
+import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=40';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=40';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -58,7 +58,13 @@ const waterTex = makeWater();
 const asphaltMat = new THREE.MeshStandardMaterial({ map: asphalt3.tex, roughness: 0.94, metalness: 0 });
 const concreteMat = new THREE.MeshStandardMaterial({ map: concreteTex, roughness: 0.88, metalness: 0.02 });
 const metalMat = new THREE.MeshStandardMaterial({ color: 0xaab0b6, metalness: 0.85, roughness: 0.38 });
-const mats = { asphalt: asphaltMat, concrete: concreteMat, metal: metalMat, index: { asphalt: 0, concrete: 1, metal: 2 } };
+const mats = { asphalt: asphaltMat, concrete: concreteMat, metal: metalMat, index: { asphalt: 0, concrete: 1, metal: 2, barrier: 3 } };
+// 主线隔音屏（半透明蓝绿玻璃屏，正宗城市高架样式）
+const barrierMat = new THREE.MeshPhysicalMaterial({
+  color: 0xbfe0e8, metalness: 0.15, roughness: 0.12,
+  transparent: true, opacity: 0.5, side: THREE.DoubleSide,
+});
+mats.barrier = barrierMat;
 // 匝道材质：专用 2 车道贴图 + 深度偏移（重叠汇合处稳定压过主线表面，无缝不闪）
 const rampAsphalt = new THREE.MeshStandardMaterial({ map: asphalt2.tex, roughness: 0.94, metalness: 0 });
 rampAsphalt.polygonOffset = true; rampAsphalt.polygonOffsetFactor = -2; rampAsphalt.polygonOffsetUnits = -2;
@@ -96,7 +102,7 @@ const deckGroup = new THREE.Group();
 for (const road of [...net.mains, ...net.ramps]) {
   const mm = road.kind === 'ramp' ? rampMats : mats;
   const geo = buildDeck(road, mm);
-  const mesh = new THREE.Mesh(geo, [mm.asphalt, mm.concrete, mm.metal]);
+  const mesh = new THREE.Mesh(geo, [mm.asphalt, mm.concrete, mm.metal, mm.barrier || mm.metal]);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   deckGroup.add(mesh);
