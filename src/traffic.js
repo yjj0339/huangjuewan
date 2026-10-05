@@ -403,13 +403,18 @@ export class PlayerCar {
     for (const arr of this.exitsByRoad.values()) arr.sort((a, b) => a.s - b.s);
     this.road = roads.mains[0];
     this.s = this.road.length * 0.42;
-    this.laneOff = 4.0;
+    {
+      const [uMin, uMax] = this.uRange(this.road);
+      this.laneOff = uMax - 2.6; // 外侧车道
+    }
     this.speed = 0;
+    this.heading = 0;      // 自由物理：车头朝向（0 = +Z，左转为正）
+    this.pos = new THREE.Vector3();
+    this.syncFromRoad();
     this.hint = '';
   }
   worldPos() {
-    const f = this.road.frameAt(this.s);
-    return f.p.clone().addScaledVector(f.side, this.laneOff);
+    return this.pos.clone();
   }
   // 当前道路的可行横向范围（连续自由驾驶，u 从中线量起；双幅只在本侧幅内）
   uRange(road) {
@@ -438,17 +443,31 @@ export class PlayerCar {
     const [uMin] = this.uRange(this.road);
     this.laneOff = uMin + 3.0;
     this.speed = 0;
+    this.syncFromRoad();
+    this.steerVis = 0;
     this.mesh.visible = true;
   }
-  // 切换线路：用世界坐标反算新路侧向偏移（位置零跳变）
+  // 由 road+s+laneOff 同步自由物理状态（位置/朝向）
+  syncFromRoad() {
+    const f = this.road.frameAt(this.s);
+    this.pos = f.p.clone().addScaledVector(f.side, this.laneOff);
+    this.heading = Math.atan2(f.tan.x, f.tan.z);
+    this.mesh.position.copy(this.pos);
+    this.mesh.rotation.y = this.heading;
+  }
+  // 切换线路：按当前位置在新路上重投影（位置/朝向零跳变）
   switchRoad(r, s) {
-    const oldPos = this.worldPos();
+    const oldPos = this.pos.clone();
+    const oldH = this.heading;
     this.road = r;
-    this.s = clamp(s, 1, r.length - 1);
+    this.s = clamp(r.nearestS(oldPos.x, oldPos.z), 1, r.length - 1);
+    if (s !== undefined) this.s = clamp(s, 1, r.length - 1);
     const f = this.road.frameAt(this.s);
     const lat = oldPos.clone().sub(f.p).dot(f.side);
     const [uMin, uMax] = this.uRange(this.road);
     this.laneOff = clamp(lat, uMin, uMax);
+    this.heading = oldH; // 航向保持（分流/汇合口切向本就吻合）
+    this.syncFromRoad();
   }
   update(dt, input) {
     const road = this.road;
@@ -457,38 +476,48 @@ export class PlayerCar {
     else if (input.down) this.speed -= 28 * dt;
     else this.speed -= 5.5 * dt;
     this.speed = clamp(this.speed, 0, limit);
-    this.s += this.speed * dt;
 
-    // 连续自由转向：左右键平滑改变横向位置（整幅路面任你开；转向速率随速度自适应）
+    // 自由转向：车头朝向随方向键连续偏转（速率随速度衰减，高速更稳）
+    const steer = clamp(input.turn, -1, 1);
+    const turnRate = 1.9 - Math.min(1.15, this.speed * 0.03);
+    this.heading -= steer * turnRate * dt * Math.min(1, this.speed / 4);
+    this.steerVis += (steer * 0.35 - this.steerVis) * Math.min(1, dt * 6);
+
+    // 前进（自由位置）
+    const fwdDrive = V3(Math.sin(this.heading), 0, Math.cos(this.heading));
+    this.pos.addScaledVector(fwdDrive, this.speed * dt);
+
+    // 道路吸附辅助：投回当前道路，越出路缘则推回并蹭护栏减速
+    this.s = road.nearestS(this.pos.x, this.pos.z);
+    const f = road.frameAt(this.s);
     const [uMin, uMax] = this.uRange(road);
-    const steerRate = 3.6 + this.speed * 0.14;
-    if (input.turn !== 0) {
-      this.laneOff = clamp(this.laneOff + input.turn * steerRate * dt, uMin, uMax);
+    const lat = this.pos.clone().sub(f.p).dot(f.side);
+    const latC = clamp(lat, uMin - 0.5, uMax + 0.5);
+    if (latC !== lat) {
+      this.pos.copy(f.p).addScaledVector(f.side, latC);
+      this.speed *= 0.985;
     }
-    // 转向视觉偏航：横向速度让车头真"转"过去（不再平移滑动）
-    const latVel = (this.laneOff - (this._pu ?? this.laneOff)) / Math.max(dt, 1e-3);
-    this._pu = this.laneOff;
-    const slipTarget = clamp(-Math.atan2(latVel, Math.max(this.speed, 4)), -0.3, 0.3);
-    this._yaw = (this._yaw || 0) + (slipTarget - (this._yaw || 0)) * Math.min(1, dt * 7);
-    // 出口：出口前 160m 开始提示；处于对应侧的外缘、且持续向该侧转向 → 平滑驶入匝道
+    this.laneOff = latC;
+
+    // 出口：窗口内 + 已在出口侧外缘 + 持续向该侧转向 → 平滑驶入匝道（位置连续）
     let taking = null;
     this.hint = '';
     for (const ex of (this.exitsByRoad.get(road) || [])) {
       if (this.s > ex.s - 130 && this.s < ex.s + 14) {
         const edgeU = ex.side > 0 ? uMax : uMin;
-        const nearEdge = Math.abs(this.laneOff - edgeU) < 4.2;
-        const dist = Math.round(ex.s - this.s);
+        const nearEdge = Math.abs(this.laneOff - edgeU) < 4.0;
+        const dist = Math.max(0, Math.round(ex.s - this.s));
         this.hint = dist > 0
-          ? `前方${dist}m ${ex.side > 0 ? '右' : '左'}侧出口：向${ex.side > 0 ? '右' : '左'}靠边驶入 ${ex.ramp.name}`
+          ? `前方${dist}m ${ex.side > 0 ? '右' : '左'}侧出口：向${ex.side > 0 ? '右' : '左'}转向驶入 ${ex.ramp.name}`
           : `已到出口：保持向${ex.side > 0 ? '右' : '左'}转向驶入 ${ex.ramp.name}`;
-        if (nearEdge && input.turn === ex.side && this.speed > 3) { taking = ex; break; }
+        if (nearEdge && steer === ex.side && this.speed > 3) { taking = ex; break; }
       }
     }
     if (taking) {
       this.switchRoad(taking.ramp, 8);
       this.hint = '已驶入 ' + taking.ramp.name;
     }
-    // 线路末端：匝道→主线 / 主线→城市干道，位置连续
+    // 线路末端：匝道→主线 / 主线→城市干道，按当前位置重投影（连续）
     if (!taking && this.s >= road.length - 0.5) {
       if (road.merge) {
         this.switchRoad(road.merge.road, road.merge.s + 2);
@@ -509,17 +538,14 @@ export class PlayerCar {
       if (ahead) {
         const minGap = 9 + this.speed * 0.5;
         if (bestGap < minGap) this.speed = Math.min(this.speed, ahead.speed * 0.9);
-        if (bestGap < 8) this.s = ahead.s - 8; // 硬保底：留出可视间距，不再贴贴
+        if (bestGap < 8) this.s = ahead.s - 8;
       }
     }
-    const f = this.road.frameAt(this.s);
-    const pos = f.p.clone().addScaledVector(f.side, this.laneOff);
-    const fwd = f.tan.clone();
-    const q = new THREE.Quaternion().setFromUnitVectors(V3(0, 0, 1), fwd);
-    q.multiply(new THREE.Quaternion().setFromAxisAngle(V3(0, 1, 0), this._yaw || 0)); // 转向偏航
-    this.mesh.position.copy(pos);
-    this.mesh.quaternion.copy(q);
-    const fwdYaw = fwd.clone().applyAxisAngle(V3(0, 1, 0), (this._yaw || 0) * 0.5);
-    return { pos, fwd: fwdYaw, speed: this.speed };
+    // 位姿（含转向视觉偏航）
+    const yawVis = this.steerVis;
+    const fwd = V3(Math.sin(this.heading + yawVis * 0.12), 0, Math.cos(this.heading + yawVis * 0.12));
+    this.mesh.position.copy(this.pos);
+    this.mesh.rotation.y = this.heading + yawVis * 0.14;
+    return { pos: this.pos.clone(), fwd, speed: this.speed };
   }
 }

@@ -472,6 +472,10 @@ addEventListener('keyup', (e) => {
   const k = e.key.toLowerCase();
   if (k === 'w' || k === 'arrowup') input.up = false;
   if (k === 's' || k === 'arrowdown') input.down = false;
+  if (mode === 'drive') {
+    if ((k === 'a' || k === 'arrowleft') && input.turn === -1) input.turn = 0;
+    if ((k === 'd' || k === 'arrowright') && input.turn === 1) input.turn = 0;
+  }
 });
 
 // 触屏驾驶按钮
@@ -481,8 +485,8 @@ const bindTouch = (id, on, off) => {
   el.addEventListener('pointerup', (ev) => { ev.stopPropagation(); off(); });
   el.addEventListener('pointerleave', () => off());
 };
-bindTouch('tc-left', () => { input.turn = -1; }, () => {});
-bindTouch('tc-right', () => { input.turn = 1; }, () => {});
+bindTouch('tc-left', () => { input.turn = -1; }, () => { if (input.turn === -1) input.turn = 0; });
+bindTouch('tc-right', () => { input.turn = 1; }, () => { if (input.turn === 1) input.turn = 0; });
 bindTouch('tc-gas', () => { input.up = true; }, () => { input.up = false; });
 bindTouch('tc-brake', () => { input.down = true; }, () => { input.down = false; });
 
