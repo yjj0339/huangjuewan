@@ -1,8 +1,8 @@
 // 车流 + 玩家驾驶车：Blender GLB 精细车辆（按材质拆分实例化），
 // AI 车流在匝道/主线/地面路之间自动转接，全程连续不凭空消失。
-import * as THREE from '../vendor/three.module.js?v=40';
-import { mergeGeoms } from './deck.js?v=40';
-import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=40';
+import * as THREE from '../vendor/three.module.js?v=41';
+import { mergeGeoms } from './deck.js?v=41';
+import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=41';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const KINDS = ['sedan', 'suv', 'bus', 'truck'];
@@ -167,6 +167,31 @@ export class Traffic {
       if (!a) { a = []; this.byRoad.set(c.road, a); }
       a.push(c);
     }
+    // 地面路平交路口表：每条地面路记录与其相交的路口点（沿路弧长）
+    this.gcross = new Map();
+    const gl = roads.grounds.filter(g => g.kind === 'ground');
+    for (let i = 0; i < gl.length; i++) {
+      for (let j = 0; j < gl.length; j++) {
+        if (i === j) continue;
+        const a = gl[i], b = gl[j];
+        // a 轴向：起点→终点方向
+        const ad = a.pts[a.pts.length - 1].clone().sub(a.pts[0]).setY(0).normalize();
+        const aAlongX = Math.abs(ad.x) > 0.7;
+        const bd = b.pts[b.pts.length - 1].clone().sub(b.pts[0]).setY(0).normalize();
+        const bAlongX = Math.abs(bd.x) > 0.7;
+        if (aAlongX === bAlongX) continue; // 平行不相交
+        const cx = aAlongX ? (b.pts[0].x) : (a.pts[0].z);
+        const cz = aAlongX ? (a.pts[0].z) : (b.pts[0].z);
+        // a 上的弧长位置
+        const px = aAlongX ? cx : (b.pts[0].x);
+        const pz = aAlongX ? (a.pts[0].z) : cz;
+        const s = a.nearestS(px, pz);
+        const arr = this.gcross.get(a.name) || [];
+        arr.push({ x: px, z: pz, s, other: b.name });
+        this.gcross.set(a.name, arr);
+      }
+    }
+    this.player = null;
     // 按车型分组建实例（GLB 分材质 / 回退方块）
     const byKind = {};
     for (const c of this.cars) (byKind[c.kind] = byKind[c.kind] || []).push(c);
@@ -242,6 +267,18 @@ export class Traffic {
 
   // 单车推进：到主线/匝道尽头时驶入汇入道路（位置连续、车道平滑滑入）
   advance(c, dt) {
+    // 平交路口让行减速：接近路口时降速通过（减少路口车辆互穿，观感更真实）
+    if (c.road.kind === 'ground' && this.gcross) {
+      const list = this.gcross.get(c.road.name);
+      if (list) {
+        for (const cp of list) {
+          if (Math.abs(cp.s - c.s) < 20 && Math.abs(cp.s - c.s) > 4) {
+            c.speed = Math.min(c.speed, (c.baseSpeed || c.speed) * 0.4);
+            break;
+          }
+        }
+      }
+    }
     c.s += c.speed * c.forward * dt;
     if (c.forward > 0 && c.s >= c.road.length - 0.2) {
       const mg = c.road.merge;
@@ -262,6 +299,9 @@ export class Traffic {
         c.laneOff = clamp(lat, -c.road.width / 2 + 1, c.road.width / 2 - 1);
         c.laneTarget = offs[bi];
         c.forward = 1;
+        // 落点找空档：目标落点附近已有车则顺移到其后（不叠车）
+        const near = (this.byRoad.get(c.road) || []).filter(o => o !== c && Math.abs(o.laneOff - c.laneOff) < 3.2 && Math.abs(o.s - c.s) < 11);
+        for (const o of near) c.s = (o.s + 11 > c.road.length - 2) ? o.s - 11 : o.s + 11;
         return;
       }
     }
@@ -270,6 +310,9 @@ export class Traffic {
   }
 
   // 同车道跟车（软化版）：优先速度匹配，硬保底仅在极近时生效
+// 注入玩家虚拟车（AI 会为玩家排队让行，不再穿过玩家）
+  setPlayer(p) { this.player = p; }
+
   followGaps() {
     const groups = new Map();
     for (const c of this.cars) {
@@ -277,6 +320,20 @@ export class Traffic {
       let arr = groups.get(k);
       if (!arr) { arr = []; groups.set(k, arr); }
       arr.push(c);
+    }
+    // 玩家作为虚拟车加入其所在车道的队列（AI 会避让玩家）
+    if (this.player && this.player.mesh.visible) {
+      const pr = this.player;
+      const offs = laneOffsetsOf(pr.road);
+      let li = 0, bd = Infinity;
+      for (let i = 0; i < offs.length; i++) {
+        const d = Math.abs(Math.abs(pr.laneOff) - offs[i]);
+        if (d < bd) { bd = d; li = i; }
+      }
+      const k = pr.road.name + '|P' + (pr.laneOff >= 0 ? '+' : '-') + li;
+      let arr = groups.get(k);
+      if (!arr) { arr = []; groups.set(k, arr); }
+      arr.push({ road: pr.road, s: pr.s, speed: Math.abs(pr.speed), isPlayer: true, parts: null });
     }
     for (const arr of groups.values()) {
       if (arr.length < 2) continue;
