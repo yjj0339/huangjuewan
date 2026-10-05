@@ -1,6 +1,6 @@
 // 车流：多车型实例化（轿车/SUV/公交/货柜），沿路网按车道行驶
-import * as THREE from '../vendor/three.module.js?v=31';
-import { mergeGeoms } from './deck.js?v=31';
+import * as THREE from '../vendor/three.module.js?v=32';
+import { mergeGeoms } from './deck.js?v=32';
 
 // 单位车（车头朝 +Z），体块拼装 + 顶点色
 function carGeo(kind) {

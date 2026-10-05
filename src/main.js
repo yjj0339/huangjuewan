@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=31';
+import * as THREE from '../vendor/three.module.js?v=32';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=31';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=31';
-import { buildDeck, buildPiers } from './deck.js?v=31';
+} from './textures.js?v=32';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=32';
+import { buildDeck, buildPiers } from './deck.js?v=32';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
-  makeVegetation, makeCity, makePark,
-} from './props.js?v=31';
-import { Traffic, PlayerCar } from './traffic.js?v=31';
-import { makeSky, makeLighting, makeClouds, makeOuterGround } from './env.js?v=31';
+  makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
+} from './props.js?v=32';
+import { Traffic, PlayerCar } from './traffic.js?v=32';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=32';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -100,8 +100,10 @@ const groundRoads = makeGroundRoads(net.grounds, { 3: asphaltG3, 2: asphaltG2 })
 scene.add(groundRoads);
 
 // ---------- 附属 ----------
-const lamps = placeLamps([...net.mains, ...net.ramps], makeLampGeometry(), grid);
+const lamps = placeLamps([...net.grounds, ...net.mains, ...net.ramps], makeLampGeometry(), grid);
 scene.add(lamps);
+scene.add(makeDelineators(net));   // 匝道诱导柱
+scene.add(makeMedianPosts(net));   // 主线防眩柱
 
 const signMats = {
   post: new THREE.MeshStandardMaterial({ color: 0x9aa2a8, metalness: 0.7, roughness: 0.4 }),
@@ -129,6 +131,8 @@ scene.add(makeCity(net, texResi, texGlass, texShop, texCityGround));
 
 // ---------- 天空/光/云 ----------
 scene.add(makeSky());
+scene.add(makeMountains());   // 远山近丘天际线
+scene.add(makeSunGlow());     // 太阳光晕
 const { sun } = makeLighting(scene);
 const clouds = makeClouds(makeCloudSprite(3), makeCloudShadowNoise(7));
 scene.add(clouds);
@@ -228,6 +232,14 @@ soundBtn.addEventListener('click', () => {
   if (!muted && mode !== 'orbit') ensureAudio();
   soundBtn.textContent = muted ? '🔇 已静音' : '🔊 音效';
   soundBtn.classList.toggle('on', !muted && mode !== 'orbit');
+});
+
+// ---------- 拍照模式（H 键或按钮切换） ----------
+const toggleUI = () => document.body.classList.toggle('hideui');
+document.getElementById('hideui').addEventListener('click', toggleUI);
+document.getElementById('showui').addEventListener('click', toggleUI);
+addEventListener('keydown', (e) => {
+  if (e.key.toLowerCase() === 'h' && mode !== 'drive') toggleUI();
 });
 
 // ---------- 模式系统：环视 / 跟随车辆 / 自由驾驶 ----------
@@ -437,6 +449,8 @@ if (params.get('follow')) {
 if (params.get('run')) input.up = true; // 截图钩子：驾驶模式自动踩油门
 
 // ---------- 主循环 ----------
+window.__BUILT_MS = Math.round(performance.now());
+document.body.dataset.build = window.__BUILT_MS;
 const clock = new THREE.Clock();
 const UPV = new THREE.Vector3(0, 1, 0);
 const chaseTarget = new THREE.Vector3(), lookPos = new THREE.Vector3();
@@ -490,16 +504,24 @@ function tick() {
 
   traffic.update(dt * (params.get('speed') ? parseFloat(params.get('speed')) : 1));
   clouds.userData.tick(dt);
+  // 池塘水面微动
+  const pond = park.userData.pond;
+  if (pond) {
+    pond.material.map.offset.x = clock.elapsedTime * 0.016;
+    pond.material.map.offset.y = clock.elapsedTime * 0.009;
+  }
 
   // 太阳阴影相机跟随视野中心
   sun.target.position.copy(focus);
   sun.position.copy(focus).add(new THREE.Vector3(420, 560, 300));
 
   renderer.render(scene, camera);
+  document.body.dataset.fr = frames; // 探针：rAF 帧计数
+  document.body.dataset.ft = Math.round(performance.now()); // 探针：真实时间
 
-  if (readyFrames < 6) {
+  if (readyFrames < 2) {
     readyFrames++;
-    if (readyFrames === 6) {
+    if (readyFrames === 2) {
       window.__DIAG.tris = renderer.info.render.triangles;
       window.__DIAG.calls = renderer.info.render.calls;
       if (params.get('camdbg') && mode === 'drive') {

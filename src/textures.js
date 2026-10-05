@@ -1,6 +1,6 @@
 // 程序化 PBR 纹理：沥青（含车道线/磨损/水渍）、混凝土（模板缝/污渍）、
 // 草地、建筑立面、交通标志、云与云影噪声。全部 Canvas 生成，零外部依赖。
-import * as THREE from '../vendor/three.module.js?v=31';
+import * as THREE from '../vendor/three.module.js?v=32';
 
 function canvas(w, h) {
   const c = document.createElement('canvas');
@@ -422,12 +422,12 @@ export function makeCityGround() {
     g.fillStyle = `rgba(${v - 20},${v + 8},${v - 34},0.25)`;
     g.fillRect(rnd() * S, rnd() * S, 2 + rnd() * 4, 2 + rnd() * 4);
   }
-  // 部分街区内部做硬化场地
+  // 部分街区内部做硬化场地（低概率浅色，避免远景块状感）
   const cell = 24.5; // 4600m / 55m ≈ 84 格 → 每格约 24.5px
   for (let gy = 0; gy < S / cell; gy++) {
     for (let gx = 0; gx < S / cell; gx++) {
-      if (rnd() < 0.22) {
-        g.fillStyle = `rgba(168,172,168,${0.25 + rnd() * 0.3})`;
+      if (rnd() < 0.12) {
+        g.fillStyle = `rgba(168,172,168,${0.14 + rnd() * 0.18})`;
         g.fillRect(gx * cell + 7, gy * cell + 7, cell - 14, cell - 14);
       }
     }

@@ -1,6 +1,6 @@
 // 附属设施：路灯、交通标志（门架+立柱牌）、地面道路、公园绿地、乔灌木、远景城市
-import * as THREE from '../vendor/three.module.js?v=31';
-import { mergeGeoms } from './deck.js?v=31';
+import * as THREE from '../vendor/three.module.js?v=32';
+import { mergeGeoms } from './deck.js?v=32';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -35,12 +35,11 @@ export function makeLampGeometry() {
 export function placeLamps(roads, lampsGeo, grid) {
   const items = [];
   for (const road of roads) {
-    if (road.kind === 'ground') continue;
-    const gap = road.kind === 'main' ? 38 : 46;
+    const gap = road.kind === 'main' ? 38 : road.kind === 'ramp' ? 46 : 55;
     const half = road.width / 2;
     for (let s = 14; s < road.length - 10; s += gap) {
       const f = road.frameAt(s);
-      for (const sgn of (road.kind === 'main' ? [1, -1] : [1])) {
+      for (const sgn of (road.kind === 'ramp' ? [1] : [1, -1])) {
         const base = f.p.clone().addScaledVector(f.side, sgn * (half + 0.5));
         // 上方 11m 内有别的桥面经过 → 灯杆会戳穿它，跳过
         if (grid && blockedAbove(grid, base, f.p.y, 7, 11)) continue;
@@ -63,6 +62,45 @@ export function placeLamps(roads, lampsGeo, grid) {
     inst.setMatrixAt(i, m);
   });
   inst.castShadow = true;
+  return inst;
+}
+
+// ---------- 匝道线形诱导柱（弯道外侧白柱，高速细节） ----------
+export function makeDelineators(roads) {
+  const list = [];
+  for (const road of roads.ramps) {
+    for (let s = 6; s < road.length - 6; s += 10) {
+      const f = road.frameAt(s);
+      for (const sgn of [1, -1]) {
+        const p = f.p.clone().addScaledVector(f.side, sgn * (road.width / 2 + 0.4));
+        list.push({ x: p.x, y: p.y + 0.48, z: p.z });
+      }
+    }
+  }
+  const geo = new THREE.CylinderGeometry(0.045, 0.055, 0.95, 6);
+  const inst = new THREE.InstancedMesh(geo,
+    new THREE.MeshStandardMaterial({ color: 0xf0f3f5, roughness: 0.5 }), list.length);
+  const m = new THREE.Matrix4();
+  list.forEach((it, i) => { m.makeTranslation(it.x, it.y, it.z); inst.setMatrixAt(i, m); });
+  inst.castShadow = false;
+  return inst;
+}
+
+// ---------- 主线中央分隔防眩柱 ----------
+export function makeMedianPosts(roads) {
+  const list = [];
+  for (const road of roads.mains) {
+    for (let s = 4; s < road.length - 4; s += 8) {
+      const f = road.frameAt(s);
+      list.push({ x: f.p.x, y: f.p.y + 0.95 + 0.26, z: f.p.z });
+    }
+  }
+  const geo = new THREE.BoxGeometry(0.10, 0.52, 0.10);
+  const inst = new THREE.InstancedMesh(geo,
+    new THREE.MeshStandardMaterial({ color: 0x59616a, roughness: 0.7 }), list.length);
+  const m = new THREE.Matrix4();
+  list.forEach((it, i) => { m.makeTranslation(it.x, it.y, it.z); inst.setMatrixAt(i, m); });
+  inst.castShadow = false;
   return inst;
 }
 
@@ -186,6 +224,18 @@ export function makeGroundRoads(grounds, asphaltTexByLanes) {
   return g;
 }
 
+// ---------- 乔木几何（公园/街区共用） ----------
+export function makeTreeGeometry() {
+  const treeItems = [];
+  const trunk = new THREE.CylinderGeometry(0.16, 0.24, 2.6, 6);
+  treeItems.push({ geo: trunk, matrix: new THREE.Matrix4().makeTranslation(0, 1.3, 0), color: 0x6d5136 });
+  const c1 = new THREE.IcosahedronGeometry(1.7, 1);
+  treeItems.push({ geo: c1, matrix: new THREE.Matrix4().makeTranslation(0, 3.4, 0), color: 0x3f6e30 });
+  const c2 = new THREE.IcosahedronGeometry(1.2, 1);
+  treeItems.push({ geo: c2, matrix: new THREE.Matrix4().makeTranslation(0.5, 4.5, 0.2), color: 0x4c8038 });
+  return mergeGeoms(treeItems);
+}
+
 // ---------- 绿化：灌木 / 乔木 ----------
 export function makeVegetation(pierPositions, groundRoads, treeClear, bushClear) {
   const group = new THREE.Group();
@@ -216,15 +266,8 @@ export function makeVegetation(pierPositions, groundRoads, treeClear, bushClear)
   shrubs.receiveShadow = true;
   group.add(shrubs);
 
-  // 乔木（干+双层冠）
-  const treeItems = [];
-  const trunk = new THREE.CylinderGeometry(0.16, 0.24, 2.6, 6);
-  treeItems.push({ geo: trunk, matrix: new THREE.Matrix4().makeTranslation(0, 1.3, 0), color: 0x6d5136 });
-  const c1 = new THREE.IcosahedronGeometry(1.7, 1);
-  treeItems.push({ geo: c1, matrix: new THREE.Matrix4().makeTranslation(0, 3.4, 0), color: 0x3f6e30 });
-  const c2 = new THREE.IcosahedronGeometry(1.2, 1);
-  treeItems.push({ geo: c2, matrix: new THREE.Matrix4().makeTranslation(0.5, 4.5, 0.2), color: 0x4c8038 });
-  const treeGeo = mergeGeoms(treeItems);
+  // 乔木（干+双层冠，几何与街区绿化共用）
+  const treeGeo = makeTreeGeometry();
   const treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true });
   const N_TREE = 620;
   const trees = new THREE.InstancedMesh(treeGeo, treeMat, N_TREE);
@@ -286,14 +329,14 @@ const C = (items, r0, r1, h, x, y, z, color, seg = 8) =>
 
 export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   const group = new THREE.Group();
-  // 城市街区地坪（街道网格，建筑落在街区里而不是草坪上）
+  // 城市街区地坪（圆形，与环形外圈草地无缝拼接不重叠）
   {
     const gt = texGround.clone();
     gt.needsUpdate = true;
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(4600, 4600),
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(2300, 64),
       new THREE.MeshStandardMaterial({ map: gt, roughness: 0.95 }));
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = 0.012;
+    ground.position.y = 0.05;
     ground.receiveShadow = true;
     group.add(ground);
   }
@@ -302,10 +345,24 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   for (const road of [...roads.mains, ...roads.grounds, ...roads.ramps]) {
     for (let s = 0; s <= road.length; s += 8) corridor.push(road.pts[road._seg(s)]);
   }
+  // 走廊空间哈希（线性扫描上万点会拖慢构建数秒）
+  const cCell = 40, cMap = new Map();
+  for (const p of corridor) {
+    const k = Math.floor(p.x / cCell) + ',' + Math.floor(p.z / cCell);
+    let arr = cMap.get(k);
+    if (!arr) { arr = []; cMap.set(k, arr); }
+    arr.push(p);
+  }
   const clearOfCorridor = (x, z, r) => {
-    for (const p of corridor) {
-      const dx = p.x - x, dz = p.z - z;
-      if (dx * dx + dz * dz < r * r) return false;
+    const x0 = Math.floor((x - r) / cCell), x1 = Math.floor((x + r) / cCell);
+    const z0 = Math.floor((z - r) / cCell), z1 = Math.floor((z + r) / cCell);
+    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
+      const arr = cMap.get(i + ',' + j);
+      if (!arr) continue;
+      for (const p of arr) {
+        const dx = p.x - x, dz = p.z - z;
+        if (dx * dx + dz * dz < r * r) return false;
+      }
     }
     return true;
   };
@@ -331,19 +388,24 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   C(resiItems, 1.05, 1.05, 2.4, -5.5, 34.2, 3.2, METAL);
   C(resiItems, 1.05, 1.05, 2.4, -5.5, 34.2, -3.2, METAL);
   const resiGeo = bboxMerge(resiItems);
-  // 写字楼：玻璃主楼 + 退台 + 屋面核心筒
+  // 写字楼：玻璃主楼 + 退台 + 屋面核心筒 + 空调机组 + 天线
   const offItems = [];
   B(offItems, 26, 52, 26, 0, 26, 0, WALL);
   B(offItems, 19, 9, 19, 0, 56.5, 0, WALL);
   B(offItems, 20, 1, 20, 0, 52.2, 0, 0xb9c2c9);
   B(offItems, 7, 3, 7, 0, 62.5, 0, DARKCORE);
+  B(offItems, 3.2, 1.4, 2.6, -5, 61.7, 5, 0x8d949b);
+  B(offItems, 2.6, 1.2, 2.2, 5.5, 61.6, -4, 0x8d949b);
+  C(offItems, 0.12, 0.2, 7, 2, 66, 2, 0x7d858c, 6);
   const offGeo = bboxMerge(offItems);
-  // 商业裙楼：大盒子 + 底商带 + 屋面机组
+  // 商业裙楼：大盒子 + 底商带 + 屋面机组 + 天线
   const podItems = [];
   B(podItems, 36, 9, 24, 0, 4.5, 0, WALL);
   B(podItems, 37, 0.8, 25, 0, 9.1, 0, 0xcac4ba);
   B(podItems, 5, 2.2, 4, 8, 10.4, 4, DARKCORE);
   B(podItems, 4, 1.8, 3.4, -7, 10.2, -3, DARKCORE);
+  B(podItems, 3, 1.5, 2.8, 0, 10.0, 8, 0x8d949b);
+  C(podItems, 0.1, 0.16, 5.5, -12, 12.5, 6, 0x7d858c, 6);
   const podGeo = bboxMerge(podItems);
   // 点式塔楼裙房（上部塔身用玻璃材质，单独实例化）
   const baseItems = [];
@@ -427,6 +489,43 @@ export function makeCity(roads, texResi, texGlass, texShop, texGround) {
   group.add(pbase);
   group.add(ptower);
 
+  // 街区绿化：未被建筑占用的格子按概率种树（城市不再光秃）
+  {
+    const cityTreeGeo = makeTreeGeometry();
+    const cityTreeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true });
+    const cap = 900;
+    const ct = new THREE.InstancedMesh(cityTreeGeo, cityTreeMat, cap);
+    const cm = new THREE.Matrix4(), cq = new THREE.Quaternion(), cs = new THREE.Vector3();
+    const ccol = new THREE.Color();
+    let cn = 0;
+    const R2 = 1900 * 1900, R1 = 530 * 530;
+    for (let gx = -1900; gx <= 1900 && cn < cap; gx += 36) {
+      for (let gz = -1900; gz <= 1900 && cn < cap; gz += 36) {
+        const d2 = gx * gx + gz * gz;
+        if (d2 < R1 || d2 > R2) continue;
+        if (occupied.has(Math.round(gx / 36) + ',' + Math.round(gz / 36))) continue;
+        if (Math.random() > 0.34) continue;
+        if (!clearOfCorridor(gx, gz, 26)) continue;
+        const nTree = 1 + (Math.random() * 3 | 0);
+        for (let k = 0; k < nTree && cn < cap; k++) {
+          const x = gx + (Math.random() - 0.5) * 22, z = gz + (Math.random() - 0.5) * 22;
+          if (!clearOfCorridor(x, z, 12)) continue;
+          const s = 0.8 + Math.random() * 0.6;
+          cq.setFromAxisAngle(UP, Math.random() * Math.PI * 2);
+          cs.set(s, s * (0.9 + Math.random() * 0.3), s);
+          cm.compose(new THREE.Vector3(x, 0, z), cq, cs);
+          ct.setMatrixAt(cn, cm);
+          ccol.setHSL(0.25 + Math.random() * 0.07, 0.38 + Math.random() * 0.16, 0.3 + Math.random() * 0.1);
+          ct.setColorAt(cn, ccol);
+          cn++;
+        }
+      }
+    }
+    ct.count = cn;
+    ct.castShadow = false;
+    group.add(ct);
+  }
+
   // 地标高塔（退台式玻璃塔 + 天线）
   const towerMat = new THREE.MeshStandardMaterial({ color: 0xc9ced3, roughness: 0.5, metalness: 0.25 });
   for (let i = 0; i < 7; i++) {
@@ -470,5 +569,6 @@ export function makePark(parkTex, pathTex, waterTex) {
   pond.scale.set(1.35, 1, 1);
   pond.position.set(-350, 0.07, 250);
   g.add(pond);
+  g.userData.pond = pond;
   return g;
 }

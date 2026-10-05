@@ -1,5 +1,6 @@
-// 环境：渐变天空穹顶、太阳直射光+半球光、雾、云朵与移动云影
-import * as THREE from '../vendor/three.module.js?v=31';
+// 环境：渐变天空穹顶、太阳直射光+半球光、雾、云朵与移动云影、远山天际线
+import * as THREE from '../vendor/three.module.js?v=32';
+import { mergeGeoms } from './deck.js?v=32';
 
 export function makeSky() {
   const geo = new THREE.SphereGeometry(5200, 32, 16);
@@ -90,10 +91,69 @@ export function makeOuterGround(grassTex) {
   const tex = grassTex.clone();
   tex.needsUpdate = true;
   tex.repeat.set(160, 160);
-  const g = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000),
+  // 环形（内圈让位给城区地坪，避免两块大平面重叠产生远景 z-fighting 条纹）
+  const g = new THREE.Mesh(new THREE.RingGeometry(2280, 4500, 64),
     new THREE.MeshStandardMaterial({ map: tex, roughness: 1 }));
   g.rotation.x = -Math.PI / 2;
-  g.position.y = -0.02;
   g.receiveShadow = true;
   return g;
+}
+
+// ---------- 远山 + 近丘天际线（山城重庆的背景层次） ----------
+function ridgeRing(rMin, rMax, hMin, hMax, color, n, seedFn) {
+  const geos = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2 + seedFn() * 0.4;
+    const r = rMin + seedFn() * (rMax - rMin);
+    const w = 320 + seedFn() * 560;
+    const h = hMin + seedFn() * (hMax - hMin);
+    const cone = new THREE.ConeGeometry(w, h, 5 + (seedFn() * 3 | 0), 1);
+    cone.rotateY(seedFn() * Math.PI);
+    // 山脊感：底部顶点水平扰动
+    const pos = cone.getAttribute('position');
+    for (let vi = 0; vi < pos.count; vi++) {
+      if (pos.getY(vi) < h / 2 - 1) {
+        pos.setX(vi, pos.getX(vi) + (seedFn() - 0.5) * w * 0.18);
+        pos.setZ(vi, pos.getZ(vi) + (seedFn() - 0.5) * w * 0.18);
+      }
+    }
+    cone.computeVertexNormals();
+    cone.translate(Math.cos(a) * r, h / 2 - 2, Math.sin(a) * r);
+    geos.push({ geo: cone, color: 0xffffff });
+  }
+  const merged = mergeGeoms(geos);
+  return new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ color, roughness: 1, flatShading: true }));
+}
+
+export function makeMountains() {
+  const group = new THREE.Group();
+  let s0 = 71;
+  const rnd = () => { s0 = (s0 * 16807) % 2147483647; return s0 / 2147483647; };
+  // 远山（蓝灰，雾中剪影）+ 近丘（灰绿）
+  group.add(ridgeRing(3450, 4150, 150, 380, 0x93a8b8, 26, rnd));
+  group.add(ridgeRing(2700, 3200, 45, 125, 0x9cb184, 34, rnd));
+  return group;
+}
+
+// ---------- 太阳光晕 ----------
+export function makeSunGlow() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,250,235,0.95)');
+  gr.addColorStop(0.25, 'rgba(255,244,214,0.5)');
+  gr.addColorStop(0.6, 'rgba(255,240,205,0.16)');
+  gr.addColorStop(1, 'rgba(255,240,205,0)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, opacity: 0.6,
+    blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+  }));
+  spr.position.set(420, 560, 300).normalize().multiplyScalar(4300);
+  spr.scale.set(1150, 1150, 1);
+  return spr;
 }
