@@ -111,15 +111,33 @@
   body.hideui #showui { display: block; }
   @media (max-width: 640px) {
     #title h1 { font-size: 19px; } #title p { font-size: 11px; }
-    #panel button { font-size: 12px; padding: 7px 10px; }
+    #panel {
+      bottom: 6px; padding: 6px 8px; border-radius: 12px;
+      max-width: calc(100vw - 12px);
+    }
+    #panel button { font-size: 11px; padding: 5px 8px; border-radius: 8px; }
     #legend { display: none; }
-    #minimap { right: 10px; top: 58px; bottom: auto; padding: 5px; }
-    #minimap canvas { width: 126px; height: 126px; }
-    #drive-hud { top: 8px; padding: 6px 12px; }
-    #drive-hud b { font-size: 22px; }
-    #touch-controls { bottom: 250px; }
-    #touch-controls button { width: 60px; height: 52px; font-size: 15px; border-radius: 13px; }
+    #minimap { right: 6px; top: 52px; bottom: auto; padding: 4px; }
+    #minimap canvas { width: 100px; height: 100px; }
+    #drive-hud { top: 6px; padding: 5px 10px; max-width: calc(100vw - 16px); }
+    #drive-hud b { font-size: 20px; }
+    #drive-hud .unit { font-size: 10px; }
+    #hud-road { font-size: 12px; }
+    #hud-hint { font-size: 10.5px; margin-top: 2px; }
+    /* 触屏按钮固定在屏幕两侧（不跟面板重叠） */
+    #touch-controls { bottom: auto; top: 50%; transform: translateY(-50%); width: auto; left: 6px; right: 6px; }
+    #touch-controls button { width: 52px; height: 48px; font-size: 13px; border-radius: 12px; }
+    #tc-brake { position: fixed; left: 8px; bottom: auto; top: 50%; transform: translateY(-50%); }
+    #tc-gas { position: fixed; right: 8px; bottom: auto; top: 50%; transform: translateY(-50%); }
+    #tc-left { position: fixed; left: 70px; bottom: auto; top: 50%; transform: translateY(-50%); }
+    #tc-right { position: fixed; right: 70px; bottom: auto; top: 50%; transform: translateY(-50%); }
+    /* 驾驶模式下面板缩到底部一行 */
+    body.in-car #panel { padding: 4px 6px; }
+    body.in-car #panel button { font-size: 10px; padding: 4px 6px; }
     body.in-car #title { display: none; }
+    body.in-car #fps-badge { display: none; }
+    /* 非驾驶模式面板可以全宽 */
+    body:not(.in-car) #panel { max-width: calc(100vw - 16px); }
   }
 </style>
 </head>
