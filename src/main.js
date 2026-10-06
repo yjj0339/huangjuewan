@@ -598,7 +598,7 @@ function chaseCam(targetPos, fwd, dist, height, lookAhead, dt, speed = 0) {
   lookPos.copy(targetPos).addScaledVector(fwd, lookAhead);
   lookPos.y += 1.4;
   camera.lookAt(lookPos);
-  const targetFov = 52 + Math.min(26, speed * 0.5);
+  const targetFov = 58 + Math.min(20, speed * 0.4);
   if (Math.abs(camera.fov - targetFov) > 0.3) {
     camera.fov += (targetFov - camera.fov) * Math.min(1, dt * 3);
     camera.updateProjectionMatrix();
@@ -630,7 +630,7 @@ function tickBody() {
     const pos = f.p.clone().addScaledVector(f.side, followCar.laneOff);
     const fwd = f.tan.clone().multiplyScalar(followCar.forward);
     const extra = followCar.kind === 'bus' ? 4.5 : followCar.kind === 'truck' ? 6 : 0;
-    chaseCam(pos, fwd, 8.5 + extra, 3.3 + extra * 0.25, 9, dt, followCar.speed * followCar.forward);
+    chaseCam(pos, fwd, 8.5 + extra, 4.2 + extra * 0.25, 9, dt, followCar.speed * followCar.forward);
     focus.copy(pos);
     engineSound(followCar.speed * followCar.forward);
     hudTick(dt, followCar.speed, followCar.road.name, null);
@@ -664,7 +664,7 @@ function tickBody() {
       document.title = `AUTO spd=${Math.round(st.speed * 3.6)} road=${player.road.name} s=${player.s.toFixed(0)}/${player.road.length.toFixed(0)} u=${player.laneOff.toFixed(1)} avg=${pEma.toFixed(1)} max=${pMax.toFixed(1)}`;
       pMax = 0;
     }
-    chaseCam(st.pos, st.fwd, 8.2 + st.speed * 0.05, 3.4, 12, dt, st.speed);
+    chaseCam(st.pos, st.fwd, 8.8 + st.speed * 0.05, 4.4, 14, dt, st.speed);
     focus.copy(st.pos);
     engineSound(st.speed);
     if (!params.get('camdbg')) {

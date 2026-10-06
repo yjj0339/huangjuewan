@@ -32,8 +32,15 @@ export function makeSky() {
 }
 
 export function makeLighting(scene) {
-  const hemi = new THREE.HemisphereLight(0xcfe4f5, 0x7d8c6c, 0.62);
+  const hemi = new THREE.HemisphereLight(0xd4e8fa, 0x8a9a78, 1.35);
   scene.add(hemi);
+  // 补光：从多个方向照亮桥下区域（五层立交下阳光照不进，必须人工补光）
+  const fill1 = new THREE.DirectionalLight(0xdce8f4, 0.85);
+  fill1.position.set(-300, 200, -200);
+  scene.add(fill1);
+  const fill2 = new THREE.DirectionalLight(0xe8f0f8, 0.55);
+  fill2.position.set(200, 80, 300);
+  scene.add(fill2);
   const sun = new THREE.DirectionalLight(0xfff2dd, 2.15);
   sun.position.set(420, 560, 300);
   sun.castShadow = true;
