@@ -318,15 +318,14 @@ export function buildNetwork() {
   // -- A×B 苜蓿叶环圈（4 条，围绕交点 (40,-60)）--
   ramps.push(loopRamp('匝道R1·A东转B北', A, A.nearestS(150, -60), +1, 52, 262, B));   // 9→18 上
   ramps.push(loopRamp('匝道R2·B北转A西', B, B.nearestS(40, -180), -1, 52, 262, A));   // 18→9 下
-  ramps.push(loopRamp('匝道R3·A西转B南', A, A.nearestS(-60, -60), +1, 52, 262, B, { t0: 0.70, amp: +5.0, w: 0.22 })); // 9→18 上（编织区上跨驼峰）
-  ramps.push(loopRamp('匝道R4·B南转A东', B, B.nearestS(40, 60), -1, 52, 262, A, { t0: 0.70, amp: -5.0, w: 0.22 }));     // 18→9 下（编织区下穿凹槽）
+  ramps.push(loopRamp('匝道R3·A西转B南', A, A.nearestS(-60, -60), +1, 52, 262, B, { t0: 0.70, amp: +5.0, w: 0.22 }));
+  ramps.push(loopRamp('匝道R4·B南转A东', B, B.nearestS(40, 60), -1, 52, 262, A, { t0: 0.70, amp: -5.0, w: 0.22 }));
 
-  // -- B×C 环圈（4 条，围绕交点 (40,~95)；半径 40 与 A×B 环圈（52）几何分离，
-  //    两组圆环互不相交，杜绝三重编织区的高度震荡）
-  ramps.push(loopRamp('匝道R5·C转B北', C, C.nearestS(150, 190), -1, 40, 262, B));     // 27→18 下
-  ramps.push(loopRamp('匝道R6·B北转C', B, B.nearestS(40, 0), +1, 40, 262, C));        // 18→27 上
-  ramps.push(loopRamp('匝道R7·C转B南', C, C.nearestS(-60, 10), +1, 40, 262, B));      // 27→18 下
-  ramps.push(loopRamp('匝道R8·B南转C', B, B.nearestS(40, 190), -1, 40, 262, C));      // 18→27 上
+  // -- B×C 环圈（4 条，围绕交点 (40,~95)）--
+  ramps.push(loopRamp('匝道R5·C转B北', C, C.nearestS(150, 190), -1, 40, 262, B));
+  ramps.push(loopRamp('匝道R6·B北转C', B, B.nearestS(40, 0), +1, 40, 262, C));
+  ramps.push(loopRamp('匝道R7·C转B南', C, C.nearestS(-60, 10), +1, 40, 262, B));
+  ramps.push(loopRamp('匝道R8·B南转C', B, B.nearestS(40, 190), -1, 40, 262, C));
 
   // -- C×D 定向半直接匝道（4 条，大 S 曲线）--
   const direct = (name, fromRoad, s0, toRoad, s1, ext = 110) => {
@@ -453,8 +452,8 @@ function regOpening(road, side, s, half) {
 }
 
 // ---------- 净空松驰与审计 ----------
-const CLEAR = 5.2;   // 交叉处最小中心高差：>2.6 桥面不相穿，>4.0 车辆不剐顶，5.2 留裕量
-const OVERSHOOT = 1.6; // 平滑稀释补偿
+const CLEAR = 5.2;
+const OVERSHOOT = 1.6;
 function buildSampleMap(all, cell = 22) {
   const map = new Map();
   const add = (o) => {
@@ -562,19 +561,29 @@ export function relaxClearances(net) {
 }
 
 // 审计：返回仍存在的交叉净空冲突（分支/汇入区除外）
-export function auditClearances(net) {
+// full=1 时检查所有道路对（含主线↔主线、主线↔地面路、地面路↔地面路）
+export function auditClearances(net, full = false) {
   const sampler = buildSampleMap(net.all);
   const out = [];
-  for (const R of net.ramps) {
+  const roadsToCheck = full ? net.all : net.ramps;
+  for (const R of roadsToCheck) {
     for (let i = 0; i < R.pts.length; i++) {
       const p = R.pts[i];
       const s = R.cum[i];
-      if (s < 32 || s > R.length - 32) continue;
+      const isEnd = s < 32 || s > R.length - 32;
+      if (!full && (isEnd)) continue;
       const cand = sampler.near(p.x, p.z, R.width / 2 + 18);
       for (const q of cand) {
-        if (q.road === R) continue;
-        if (q.road === R.exit?.road && s < 80) continue;
-        if (q.road === R.merge?.road && s > R.length - 80) continue;
+        if (q.road === R || q.road.name <= R.name) continue; // 每对只报一次
+        // 分支/汇入区跳过
+        if (R.exit?.road === q.road && s < 80) continue;
+        if (R.merge?.road === q.road && s > R.length - 80) continue;
+        if (q.road.exit?.road === R && q.idx * (q.road.length / q.road.pts.length) < 80) continue;
+        if (q.road.merge?.road === R && (q.road.length - q.idx * (q.road.length / q.road.pts.length)) < 80) continue;
+        // 地面路交叉跳过（平交路口正常）
+        if (R.kind === 'ground' && q.road.kind === 'ground') continue;
+        // 主线落地段贴地部分 vs 地面路跳过
+        if (p.y < 1.5 && q.y < 1.5) continue;
         const lat = Math.hypot(q.x - p.x, q.z - p.z);
         if (lat > R.width / 2 + q.half + 1.2) continue;
         const dy = Math.abs(p.y - q.y);

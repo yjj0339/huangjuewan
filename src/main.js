@@ -77,8 +77,8 @@ const rampMats = { asphalt: rampAsphalt, concrete: rampConcrete, metal: metalMat
 const net = buildNetwork();
 const grid = buildCollisionGrid([...net.mains, ...net.ramps]);
 if (params.get('audit')) {
-  const conf = auditClearances(net);
-  document.body.setAttribute('data-audit', JSON.stringify({ n: conf.length, items: conf.slice(0, 24) }));
+  const conf = auditClearances(net, params.get('full') === '1');
+  document.body.setAttribute('data-audit', JSON.stringify({ n: conf.length, items: conf.slice(0, parseInt(params.get('slice') || '40', 10)) }));
   document.title = 'AUDIT' + conf.length;
 }
 // 连接点导出：所有匝道的分支/汇合世界坐标（供逐一目验）
