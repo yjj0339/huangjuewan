@@ -564,7 +564,16 @@ export class PlayerCar {
     }
     this.speed = Math.min(this.speed + 9 * dt, limit);
     this.s = clamp(this.s + this.speed * dt, 0.5, road.length - 0.3);
-    // 出口：贴外缘滑到分流口即切上匝道（位置连续）
+    // 出口：临近出口时滑向外缘，贴到分流口即切上匝道（位置连续）
+    let exitSide = 0;
+    for (const ex of (this.exitsByRoad.get(road) || [])) {
+      if (this.s > ex.s - 100 && this.s < ex.s + 8) { exitSide = ex.side; break; }
+    }
+    if (exitSide !== 0) {
+      // 出口临近：滑向出口侧外缘
+      const edgeU = exitSide > 0 ? road.width / 2 - 1.2 : -(road.width / 2 - 1.2);
+      this.laneOff += (edgeU - this.laneOff) * Math.min(1, dt * 1.5);
+    }
     for (const ex of (this.exitsByRoad.get(road) || [])) {
       const edgeU = ex.side > 0 ? road.width / 2 - 1.2 : -(road.width / 2 - 1.2);
       if (Math.abs(this.laneOff - edgeU) < 3.4 && Math.abs(this.s - ex.s) < 10) {

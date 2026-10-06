@@ -650,8 +650,16 @@ function tickBody() {
       const rel = exitSide !== 0 ? exitSide * 0.3 : clamp((want - player.laneOff) * 0.10, -0.32, 0.32);
       const desiredH = tanA - rel; // rel>0 = 需向右 = 航向应减小
       input.turn = clamp((player.heading - desiredH) * 2.6, -1, 1);
+    } else {
+      input.turn = 0;
     }
-    const st = player.update(dt, input);
+    let st;
+    if (autoDrive) {
+      // 自动巡航：轨道伺服（绝对跟线，弯道自动过）
+      st = player.autoCruise(dt);
+    } else {
+      st = player.update(dt, input);
+    }
     if (autoDrive && (frameNo % 40) === 0) {
       document.title = `AUTO spd=${Math.round(st.speed * 3.6)} road=${player.road.name} s=${player.s.toFixed(0)}/${player.road.length.toFixed(0)} u=${player.laneOff.toFixed(1)} avg=${pEma.toFixed(1)} max=${pMax.toFixed(1)}`;
       pMax = 0;
