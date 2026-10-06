@@ -1,6 +1,6 @@
 // 环境：渐变天空穹顶、太阳直射光+半球光、雾、云朵与移动云影、远山天际线
-import * as THREE from '../vendor/three.module.js?v=42';
-import { mergeGeoms } from './deck.js?v=42';
+import * as THREE from '../vendor/three.module.js?v=43';
+import { mergeGeoms } from './deck.js?v=43';
 
 export function makeSky() {
   const geo = new THREE.SphereGeometry(5200, 32, 16);
@@ -37,8 +37,8 @@ export function makeLighting(scene) {
   const sun = new THREE.DirectionalLight(0xfff2dd, 2.15);
   sun.position.set(420, 560, 300);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  const S = 470;
+  sun.shadow.mapSize.set(1024, 1024);
+  const S = 380;
   sun.shadow.camera.left = -S; sun.shadow.camera.right = S;
   sun.shadow.camera.top = S; sun.shadow.camera.bottom = -S;
   sun.shadow.camera.near = 100;

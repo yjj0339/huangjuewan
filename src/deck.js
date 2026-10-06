@@ -1,6 +1,6 @@
 // 桥面几何：沿道路中心线扫描横断面 → 沥青桥面 + 混凝土边梁腹板 + 护栏 + 中央分隔墙；
 // 桥墩：锥形方柱 + 盖梁 + 基座，自动避让下方穿越的其它桥面。
-import * as THREE from '../vendor/three.module.js?v=42';
+import * as THREE from '../vendor/three.module.js?v=43';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -180,8 +180,20 @@ function carriagewaySweep(buffers, framesAll, centerOff, cw, mats, openings = nu
   // 腹板（外侧面）+ 底板
   sweep([{ u: w2, v: 0 }, { u: w2 + 0.10, v: -1.30 }], null, mats.index.concrete,
     { frames, tileLen: 7, closed: false }, buffers);
+    // 底板加厚（视觉上更实的箱梁结构，层间穿越更明显是"桥下穿"而非"穿模"）
   sweep([{ u: w2 + 0.10, v: -1.30 }, { u: -w2 - 0.10, v: -1.30 }], null, mats.index.concrete,
     { frames, tileLen: 7, closed: false }, buffers);
+  // 底板纵肋（每 4 帧一条，增加箱梁结构感）
+  for (let fi = 0; fi < frames.length; fi += 4) {
+    const fr = frames[fi];
+    const ribW = cw * 0.04;
+    for (const ru of [-cw * 0.25, 0, cw * 0.25]) {
+      capFan(buffers, fr, [
+        { u: ru - ribW / 2, v: -1.30 }, { u: ru + ribW / 2, v: -1.30 },
+        { u: ru + ribW / 2, v: -1.55 }, { u: ru - ribW / 2, v: -1.55 },
+      ], false, mats.index.concrete);
+    }
+  }
   sweep([{ u: -w2 - 0.10, v: -1.30 }, { u: -w2, v: 0 }], null, mats.index.concrete,
     { frames, tileLen: 7, closed: false }, buffers);
   // 两侧混凝土护栏（封闭断面）+ 金属横栏（分流/汇合点按 openings 开豁口）
