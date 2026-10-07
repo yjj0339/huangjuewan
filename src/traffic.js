@@ -1,8 +1,8 @@
 // 车流 + 玩家驾驶车：Blender GLB 精细车辆（按材质拆分实例化），
 // AI 车流在匝道/主线/地面路之间自动转接，全程连续不凭空消失。
-import * as THREE from '../vendor/three.module.js?v=43';
-import { mergeGeoms } from './deck.js?v=43';
-import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=43';
+import * as THREE from '../vendor/three.module.js?v=44';
+import { mergeGeoms } from './deck.js?v=44';
+import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=44';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const KINDS = ['sedan', 'suv', 'bus', 'truck'];
@@ -282,31 +282,38 @@ export class Traffic {
     c.s += c.speed * c.forward * dt;
     if (c.forward > 0 && c.s >= c.road.length - 0.2) {
       const mg = c.road.merge;
-      if (mg) {
-        const oldF = c.road.frameAt(c.road.length);
-        const oldPos = oldF.p.clone().addScaledVector(oldF.side, c.laneOff);
-        c.road = mg.road;
-        c.s = clamp(mg.s + 2, 2, c.road.length - 2);
-        const nf = c.road.frameAt(c.s);
-        const lat = oldPos.clone().sub(nf.p).dot(nf.side);
-        const offs = laneOffsetsOf(c.road);
-        let bi = 0, bd = Infinity;
-        for (let i = 0; i < offs.length; i++) {
-          const d = Math.abs(offs[i] - lat);
-          if (d < bd) { bd = d; bi = i; }
-        }
-        c.laneIdx = bi;
-        c.laneOff = clamp(lat, -c.road.width / 2 + 1, c.road.width / 2 - 1);
-        c.laneTarget = offs[bi];
-        c.forward = 1;
-        // 落点找空档：目标落点附近已有车则顺移到其后（不叠车）
-        const near = (this.byRoad.get(c.road) || []).filter(o => o !== c && Math.abs(o.laneOff - c.laneOff) < 3.2 && Math.abs(o.s - c.s) < 11);
-        for (const o of near) c.s = (o.s + 11 > c.road.length - 2) ? o.s - 11 : o.s + 11;
-        return;
-      }
+      if (mg) { this._handOff(c, mg); return; }
+    }
+    if (c.forward < 0 && c.s <= 0.2) {
+      const mh = c.road.mergeHead;
+      if (mh) { this._handOff(c, mh); return; }
     }
     if (c.s >= c.road.length) c.s -= c.road.length;
     if (c.s < 0) c.s += c.road.length;
+  }
+
+  // 尽头交接：落到目标路，按登记的 fwd 选择行进方向，落点找空档不叠车
+  _handOff(c, mg) {
+    const oldF = c.road.frameAt(c.forward > 0 ? c.road.length : 0);
+    const oldPos = oldF.p.clone().addScaledVector(oldF.side, c.laneOff);
+    c.road = mg.road;
+    const fwd = mg.fwd || 1;
+    c.s = clamp((mg.sEnd ?? mg.s) + 2 * fwd, 2, c.road.length - 2);
+    const nf = c.road.frameAt(c.s);
+    const lat = oldPos.clone().sub(nf.p).dot(nf.side);
+    const offs = laneOffsetsOf(c.road);
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i < offs.length; i++) {
+      const d = Math.abs(offs[i] - lat);
+      if (d < bd) { bd = d; bi = i; }
+    }
+    c.laneIdx = bi;
+    c.laneOff = clamp(lat, -c.road.width / 2 + 1, c.road.width / 2 - 1);
+    c.laneTarget = offs[bi];
+    c.forward = fwd;
+    // 落点找空档：目标落点附近已有车则顺移到其后（不叠车）
+    const near = (this.byRoad.get(c.road) || []).filter(o => o !== c && o.forward === fwd && Math.abs(o.laneOff - c.laneOff) < 3.2 && Math.abs(o.s - c.s) < 11);
+    for (const o of near) c.s = (o.s + 11 * fwd > c.road.length - 2 || o.s + 11 * fwd < 2) ? o.s - 11 * fwd : o.s + 11 * fwd;
   }
 
   // 同车道跟车（软化版）：优先速度匹配，硬保底仅在极近时生效
@@ -518,14 +525,18 @@ export class PlayerCar {
       this.switchRoad(taking.ramp);
     }
     // 线路末端：匝道→主线 / 主线→城市干道，按当前位置重投影（连续）
-    // 触发线放宽到 length−6.5：nearestS 有 6m 量化，贴末端判定会永远差几米卡死
-    if (!taking && this.s >= road.length - 9.5) {
-      if (road.merge) {
-        this.switchRoad(road.merge.road);
-      } else {
-        this.s = 2; // 干道尽头兜底环回（远在雾中）
-        this.syncFromRoad();
-      }
+    // 用"越端投影"判定：位置沿切向越过路端才切换（比 s 窗口精确，不在路口中途横移）
+    if (!taking && road.merge) {
+      const fN = road.frameAt(road.length - 0.5);
+      if (this.pos.clone().sub(fN.p).dot(fN.tan) > 0) this.switchRoad(road.merge.road);
+    } else if (!taking && !road.merge && this.s >= road.length - 9.5) {
+      this.s = 2; // 干道尽头兜底环回（远在雾中）
+      this.syncFromRoad();
+    }
+    // 头端落地：越过起点投影后重投影接入城市干道（位置连续）
+    if (!taking && road.mergeHead && this.speed > 0.5) {
+      const f0 = road.frameAt(0.5);
+      if (this.pos.clone().sub(f0.p).dot(f0.tan) < 0) this.switchRoad(road.mergeHead.road);
     }
     // 与 AI 车碰撞避让：前方同向近车限制速度并保持间距（不再互相穿透）
     if (this.traffic) {
@@ -583,9 +594,9 @@ export class PlayerCar {
         break;
       }
     }
-    // 末端：匝道并入目标 / 无汇入则环回
+    // 末端：匝道并入目标（落点=延伸尾末端）/ 无汇入则环回
     if (road.merge && this.s >= road.length - 0.4) {
-      this.switchRoad(road.merge.road, road.merge.s + 2);
+      this.switchRoad(road.merge.road, (road.merge.sEnd ?? road.merge.s) + 2);
     } else if (this.s >= road.length - 0.3) {
       this.s = 2;
     }

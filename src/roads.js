@@ -2,7 +2,7 @@
 // 层1 地面道路 G | 层2 主线A y=9 | 层3 主线B y=18 | 层4 主线C y=27 | 层5 主线D y=36
 // 匝道两端通过"锚点自动对接"生成：起点/终点直接吸附到目标道路的采样点，位置、
 // 标高、切向自动吻合，保证结构上真正互通。
-import * as THREE from '../vendor/three.module.js?v=43';
+import * as THREE from '../vendor/three.module.js?v=44';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -111,12 +111,11 @@ function rayCityCross(p, d) {
 }
 
 // 末端落地段：平滑降到地面，并一直延伸到最近的干道路口（路口即终点）
-// 最后 15m 渐变下沉至 0.12m，与干道路面齐平（不再有混凝土坎横在路口）
+// 最后 15m 微抬 +0.12m 与干道沥青面齐平略高（形成路缘；不再下埋造成穿插）
 export function endDescent(pts, dropLen = 320, yGround = 0.4) {
   const n0 = pts.length;
   const d = pts[n0 - 1].clone().sub(pts[n0 - 8]).setY(0).normalize();
   const y0 = pts[n0 - 1].y;
-  const yEnd = yGround - 0.28;
   const cross = rayCityCross(pts[n0 - 1], d);
   const totalLen = cross !== null
     ? Math.max(dropLen + 35, cross + 2)
@@ -127,17 +126,16 @@ export function endDescent(pts, dropLen = 320, yGround = 0.4) {
     const e = smooth01(Math.min(1, dist / dropLen));
     let y = y0 + (yGround - y0) * e;
     const tailStart = totalLen - 15;
-    if (dist > tailStart) y -= (yGround - 0.12) * ((dist - tailStart) / 15);
+    if (dist > tailStart) y += 0.12 * ((dist - tailStart) / 15);
     pts.push(pts[n0 - 1].clone().addScaledVector(d, dist).setY(y));
   }
   return pts;
 }
 
-// 起点引坡段：反向外推（远端最后 15m 同样与干道齐平）
+// 起点引坡段：反向外推（远端最后 15m 同样微抬与干道齐平略高）
 export function headDescent(pts, dropLen = 320, yGround = 0.4) {
   const d = pts[0].clone().sub(pts[7]).setY(0).normalize(); // 指向起点的外侧
   const y0 = pts[0].y;
-  const yEnd = yGround - 0.28;
   const cross = rayCityCross(pts[0], d);
   const totalLen = cross !== null
     ? Math.max(dropLen + 35, cross + 2)
@@ -149,7 +147,7 @@ export function headDescent(pts, dropLen = 320, yGround = 0.4) {
     const e = smooth01(Math.min(1, dist / dropLen));
     let y = y0 + (yGround - y0) * e;
     const tailStart = totalLen - 15;
-    if (dist > tailStart) y -= (yGround - 0.12) * ((dist - tailStart) / 15);
+    if (dist > tailStart) y += 0.12 * ((dist - tailStart) / 15);
     head.push(pts[0].clone().addScaledVector(d, dist).setY(y));
   }
   pts.unshift(...head);
@@ -416,9 +414,88 @@ export function buildNetwork() {
     }
     if (best && Math.sqrt(bd) < 22) {
       m.merge = best;
-      // 终点路口：两侧护栏都开豁口（路口不设护栏）
+      const e1 = m.pts[m.pts.length - 1], e0 = m.pts[m.pts.length - 8];
+      m.merge.fwd = landingFwd(e1.clone().sub(e0).setY(0).normalize(), best.road.frameAt(best.s).tan);
+      // 终点路口：两侧护栏都开豁口（路口不设护栏）；目标干道的护栏同样断开
       regOpening(m, 1, m.length, 26);
       regOpening(m, -1, m.length, 26);
+      regOpening(best.road, 1, best.s, 20);
+      regOpening(best.road, -1, best.s, 20);
+    }
+  }
+  // 汇入段延伸：匝道末端沿目标路面前行 ~52m 并横向收进目标路面内，
+  // 沥青真正叠在目标路上（深度偏移材质防闪烁），消灭"斜插路肩即断头"的观感
+  extendMergeTails(ramps);
+  // 地面路中分带断口：G×G 平交路口 + 主线/匝道汇入点（墙不能横穿路口）
+  for (const g of grounds) g.medianBreaks = [];
+  for (const m of mains) m.medianBreaks = [];
+  for (let i = 0; i < grounds.length; i++) for (let j = i + 1; j < grounds.length; j++) {
+    const a = grounds[i], b = grounds[j];
+    const ad = a.pts[a.pts.length - 1].clone().sub(a.pts[0]).setY(0).normalize();
+    const bd = b.pts[b.pts.length - 1].clone().sub(b.pts[0]).setY(0).normalize();
+    if (Math.abs(ad.dot(bd)) > 0.7) continue; // 平行不相交
+    for (let s = 20; s < a.length - 20; s += 6) {
+      const p = a.pts[a._seg(s)];
+      const sb = b.nearestS(p.x, p.z);
+      const q = b.pts[b._seg(sb)];
+      if ((p.x - q.x) ** 2 + (p.z - q.z) ** 2 < 4) {
+        a.medianBreaks.push(s);
+        b.medianBreaks.push(sb);
+        regOpening(a, 1, s, 16); regOpening(a, -1, s, 16);   // 路口护栏断开
+        regOpening(b, 1, sb, 16); regOpening(b, -1, sb, 16);
+        break;
+      }
+    }
+  }
+  const breakMedianAt = (r) => {
+    if (!r.merge || r.merge.road.kind !== 'ground') return;
+    r.merge.road.medianBreaks.push(r.merge.s);
+  };
+  for (const r of ramps) breakMedianAt(r);
+  for (const m of mains) breakMedianAt(m);
+  // 主线落地段以地面高度横穿地面路（如 B 落地穿过北横路）：双方护栏/中分墙断开
+  for (const m of mains) {
+    m._gradeX = [];
+    for (let s = 40; s < m.length - 40; s += 6) {
+      const p = m.pts[m._seg(s)];
+      if (p.y > 1.3) continue; // 仅落地段参与平交
+      for (const g of grounds) {
+        const sg = g.nearestS(p.x, p.z);
+        const q = g.pts[g._seg(sg)];
+        if ((p.x - q.x) ** 2 + (p.z - q.z) ** 2 < (m.width / 2 + g.width / 2) ** 2) {
+          m.medianBreaks.push(s);
+          g.medianBreaks.push(sg);
+          regOpening(m, 1, s, 20); regOpening(m, -1, s, 20);
+          regOpening(g, 1, sg, 20); regOpening(g, -1, sg, 20);
+          m._gradeX.push({ s, W: g.width / 2 + m.width / 2 });
+        }
+      }
+    }
+    // 平交处主线沥青与地面路共面 → 微抬 16cm 防闪烁（缓坡过渡，行车无感）
+    for (const cx of m._gradeX) {
+      for (let i = 0; i < m.pts.length; i++) {
+        const d = Math.abs(m.cum[i] - cx.s);
+        if (d < cx.W + 14) m.pts[i].y += 0.16 * smooth01(Math.min(1, (cx.W + 14 - d) / 14));
+      }
+    }
+  }
+  // 主线头端落地：同样接入最近地面路（AI 反向车流到头不再瞬移环回）
+  for (const m of mains) {
+    const end = m.pts[0];
+    let best = null, bd = Infinity;
+    for (const g of grounds) {
+      const sg = g.nearestS(end.x, end.z);
+      const p = g.pts[g._seg(sg)];
+      const d2 = (p.x - end.x) ** 2 + (p.z - end.z) ** 2;
+      if (d2 < bd) { bd = d2; best = { road: g, s: sg }; }
+    }
+    if (best && Math.sqrt(bd) < 22) {
+      best.fwd = landingFwd(m.pts[0].clone().sub(m.pts[7]).setY(0).normalize(), best.road.frameAt(best.s).tan);
+      m.mergeHead = best;
+      regOpening(m, 1, 0.5, 26);
+      regOpening(m, -1, 0.5, 26);
+      regOpening(best.road, 1, best.s, 20);
+      regOpening(best.road, -1, best.s, 20);
     }
   }
   // 护栏豁口登记：所有匝道↔主线的分流/汇合点，双方对应侧都开口（车辆与视觉真正互通）
@@ -433,7 +510,7 @@ export function buildNetwork() {
     }
     if (r.merge) {
       const f = r.merge.road.frameAt(r.merge.s);
-      const rp = r.frameAt(r.length - 2);
+      const rp = r.frameAt((r.preTailLen ?? r.length) - 2);
       const uParent = rp.p.clone().sub(f.p).dot(f.side);
       regOpening(r, uParent >= 0 ? 1 : -1, r.length, 60);
       const uRamp = f.p.clone().sub(rp.p).dot(rp.side);
@@ -444,9 +521,53 @@ export function buildNetwork() {
   return net;
 }
 
+// 落地合并的行进方向选择：优先右转（右侧通行自然转向），其次同向
+// outDir = 主线冲出端口的行进方向; gtan = 目标路规范切向
+function landingFwd(outDir, gtan) {
+  const rightZ = outDir.z, rightX = -outDir.x; // up × outDir 的水平分量
+  const dotR = rightZ * gtan.z + rightX * gtan.x;
+  if (Math.abs(dotR) > 0.3) return dotR >= 0 ? 1 : -1;
+  return outDir.dot(gtan) >= 0 ? 1 : -1;
+}
+
+// 汇入段延伸：沿目标路面前行 EXT 米、横向从"路缘外"平滑收进目标车道内。
+// 结束点严格位于目标路面内（|lat| + 匝道半宽 ≤ 目标半宽 - 0.8），
+// 高度每点贴合目标路面 +5cm（深度偏移材质防共面闪烁）。
+// r.merge.sEnd = 汇入完成点在目标路上的弧长（traffic 换道落点用）。
+function extendMergeTails(ramps) {
+  ramps.forEach((r, idx) => {
+    const mg = r.merge;
+    if (!mg) return;
+    const target = mg.road;
+    const half = target.width / 2;
+    const endF = r.frameAt(r.length);
+    const mF = target.frameAt(mg.s);
+    const lat0 = endF.p.clone().sub(mF.p).dot(mF.side);
+    const dir = Math.sign(lat0) || 1;
+    const endLat = Math.max(2.0, half - r.width / 2 - 0.8) * dir;
+    const EXT = 52;
+    const n = 13;
+    r.preTailLen = r.length;
+    // 同点汇入的匝道尾巴会共面叠加（如 R1/R3 同汇 B），按序号错开 3.5cm 防闪烁
+    const yOff = 0.05 + (idx % 4) * 0.035;
+    for (let i = 1; i <= n; i++) {
+      const t = i / n;
+      const f = target.frameAt(mg.s + EXT * t);
+      const lat = lat0 + (endLat - lat0) * smooth01(t);
+      r.pts.push(f.p.clone().addScaledVector(f.side, lat).setY(f.p.y + yOff));
+    }
+    r.mergeTailS0 = r.preTailLen - 10; // 净空松驰跳过尾段（尾段与目标路共面是刻意的）
+    r._finalize();
+    r.merge.sEnd = Math.min(target.length - 6, mg.s + EXT);
+    regOpening(r, 1, r.length - EXT / 2, EXT / 2 + 10);   // 尾段双侧护栏全开
+    regOpening(r, -1, r.length - EXT / 2, EXT / 2 + 10);
+  });
+}
+
 // 给道路登记一段护栏豁口（side: 本路 frame 的左右；s: 中点弧长；half: 半长）
+// 地面路同样生效：G 路护栏在平交路口/匝道汇入点必须断开，否则栏杆横穿路面
 function regOpening(road, side, s, half) {
-  if (!road || road.kind === 'ground') return;
+  if (!road) return;
   if (!road.openings) road.openings = [];
   road.openings.push({ side, s, half });
 }
@@ -508,6 +629,7 @@ export function relaxClearances(net) {
         const p = R.pts[i];
         const s = R.cum[i];
         if (s < 32 || s > R.length - 32) continue; // 分支/汇入段不调
+        if (R.mergeTailS0 != null && s >= R.mergeTailS0) continue; // 汇入延伸段与目标路共面是刻意的
         const cand = sampler.near(p.x, p.z, R.width / 2 + 18);
         for (const q of cand) {
           if (q.road === R) continue;

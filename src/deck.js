@@ -1,6 +1,6 @@
 // 桥面几何：沿道路中心线扫描横断面 → 沥青桥面 + 混凝土边梁腹板 + 护栏 + 中央分隔墙；
 // 桥墩：锥形方柱 + 盖梁 + 基座，自动避让下方穿越的其它桥面。
-import * as THREE from '../vendor/three.module.js?v=43';
+import * as THREE from '../vendor/three.module.js?v=44';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -115,9 +115,18 @@ export function buildDeck(road, mats) {
     for (const sgn of [1, -1]) {
       carriagewaySweep(buffers, frames, sgn * off, cw, mats, road.openings, road);
     }
-    // 中央分隔墙
-    sweep([{ u: -0.42, v: 0 }, { u: 0.42, v: 0 }, { u: 0.30, v: 0.95 }, { u: -0.30, v: 0.95 }],
-      null, mats.index.concrete, { frames, tileLen: 8, closed: true }, buffers);
+    // 中央分隔墙：主线两端各留 26m 不设墙（落地尽头是路口）；
+    // 地面路在平交路口/汇入点断开（medianBreaks），墙不能横穿车道
+    {
+      const mb = road.medianBreaks;
+      const mSkip = (s) => {
+        if (road.kind === 'main' && (s < 26 || s > road.length - 26)) return true;
+        if (mb) for (const sb of mb) if (Math.abs(s - sb) < 15) return true;
+        return false;
+      };
+      sweep([{ u: -0.42, v: 0 }, { u: 0.42, v: 0 }, { u: 0.30, v: 0.95 }, { u: -0.30, v: 0.95 }],
+        null, mats.index.concrete, { frames, tileLen: 8, closed: true, skipAt: mSkip, capEdges: true }, buffers);
+    }
   } else {
     carriagewaySweep(buffers, frames, 0, road.width, mats, road.openings, road);
   }
