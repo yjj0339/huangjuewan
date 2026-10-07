@@ -35,17 +35,12 @@ def box(name, sx, sy, sz, loc, material, bevel=0.03, taper=None, rot=(0, 0, 0), 
                 v.co.x *= taper[0]
                 v.co.y *= taper[1]
     ob.data.materials.append(material)
-    if bevel > 0:
+    if bevel > 0 and bevel >= 0.05:
         b = ob.modifiers.new("bev", 'BEVEL')
         b.width = bevel
-        b.segments = 3
+        b.segments = 2
         b.limit_method = 'ANGLE'
         bpy.ops.object.modifier_apply(modifier=b.name)
-    if subsurf > 0:
-        s = ob.modifiers.new("sub", 'SUBSURF')
-        s.levels = subsurf
-        s.render_levels = subsurf
-        bpy.ops.object.modifier_apply(modifier=s.name)
     for p in ob.data.polygons:
         p.use_smooth = True
     return ob
@@ -54,24 +49,19 @@ def box(name, sx, sy, sz, loc, material, bevel=0.03, taper=None, rot=(0, 0, 0), 
 def wheel(name, y, x, r, w, m_tire, m_chrome):
     # 轮胎 = 圆环；轮毂 = 盘 + 5 辐条（绕 X 轴放射）+ 中心帽
     bpy.ops.mesh.primitive_torus_add(major_radius=r * 0.82, minor_radius=r * 0.21,
-                                     major_segments=24, minor_segments=10,
+                                     major_segments=16, minor_segments=8,
                                      location=(x, y, r), rotation=(pi / 2, 0, 0))
     t = bpy.context.object
     t.name = name + "_tire"
     t.scale = (1.0, w / (r * 0.34), w / (r * 0.34))
     bpy.ops.object.transform_apply(scale=True)
     t.data.materials.append(m_tire)
-    bpy.ops.mesh.primitive_cylinder_add(vertices=20, radius=r * 0.72, depth=w * 0.92,
+    bpy.ops.mesh.primitive_cylinder_add(vertices=14, radius=r * 0.72, depth=w * 0.92,
                                         location=(x, y, r), rotation=(0, pi / 2, 0))
     rim = bpy.context.object
     rim.name = name + "_rim"
     rim.data.materials.append(m_chrome)
-    for i in range(5):
-        a = i * pi * 2 / 5
-        box(name + "_spoke", w * 0.55, r * 0.58, 0.05,
-            (x, y + sin(a) * r * 0.34, r + cos(a) * r * 0.34),
-            m_chrome, 0.008, rot=(a, 0, 0))
-    bpy.ops.mesh.primitive_cylinder_add(vertices=16, radius=r * 0.16, depth=w * 1.02,
+    bpy.ops.mesh.primitive_cylinder_add(vertices=12, radius=r * 0.16, depth=w * 1.02,
                                         location=(x, y, r), rotation=(0, pi / 2, 0))
     hub = bpy.context.object
     hub.name = name + "_hub"

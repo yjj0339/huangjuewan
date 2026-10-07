@@ -1,8 +1,8 @@
 // 车流 + 玩家驾驶车：Blender GLB 精细车辆（按材质拆分实例化），
 // AI 车流在匝道/主线/地面路之间自动转接，全程连续不凭空消失。
-import * as THREE from '../vendor/three.module.js?v=48';
-import { mergeGeoms } from './deck.js?v=48';
-import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=48';
+import * as THREE from '../vendor/three.module.js?v=49';
+import { mergeGeoms } from './deck.js?v=49';
+import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=49';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const KINDS = ['sedan', 'suv', 'bus', 'truck'];
@@ -26,7 +26,7 @@ export async function loadCarAssets(basePath) {
   const out = {};
   await Promise.all(KINDS.map(async (k) => {
     try {
-      const gltf = await loader.loadAsync(basePath + k + '.glb?v=48');
+      const gltf = await loader.loadAsync(basePath + k + '.glb?v=49');
       gltf.scene.updateMatrixWorld(true);
       const byMat = {};
       gltf.scene.traverse((o) => {

@@ -2,7 +2,7 @@
 // 层1 地面道路 G | 层2 主线A y=9 | 层3 主线B y=18 | 层4 主线C y=27 | 层5 主线D y=36
 // 匝道两端通过"锚点自动对接"生成：起点/终点直接吸附到目标道路的采样点，位置、
 // 标高、切向自动吻合，保证结构上真正互通。
-import * as THREE from '../vendor/three.module.js?v=48';
+import * as THREE from '../vendor/three.module.js?v=49';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -329,17 +329,17 @@ export function buildNetwork() {
   const G1 = grounds[0], G2 = grounds[1], G3 = grounds[2];
 
   // ===== 20 条匝道 =====
-  // -- A×B 苜蓿叶环圈（4 条，围绕交点 (40,-60)）--
-  ramps.push(loopRamp('匝道R1·A东转B北', A, A.nearestS(150, -60), +1, 52, 262, B));   // 9→18 上
-  ramps.push(loopRamp('匝道R2·B北转A西', B, B.nearestS(40, -180), -1, 52, 262, A));   // 18→9 下
-  ramps.push(loopRamp('匝道R3·A西转B南', A, A.nearestS(-60, -60), +1, 52, 262, B, { t0: 0.70, amp: +5.0, w: 0.22 }));
-  ramps.push(loopRamp('匝道R4·B南转A东', B, B.nearestS(40, 60), -1, 52, 262, A, { t0: 0.70, amp: -5.0, w: 0.22 }));
+  // -- A×B 苜蓿叶环圈（4 条，围绕交点 (40,-60)；半径错开防边缘视角叠罗汉）--
+  ramps.push(loopRamp('匝道R1·A东转B北', A, A.nearestS(150, -60), +1, 58, 262, B));   // 9→18 上
+  ramps.push(loopRamp('匝道R2·B北转A西', B, B.nearestS(40, -180), -1, 44, 262, A));   // 18→9 下
+  ramps.push(loopRamp('匝道R3·A西转B南', A, A.nearestS(-60, -60), +1, 66, 262, B, { t0: 0.70, amp: +5.0, w: 0.22 }));
+  ramps.push(loopRamp('匝道R4·B南转A东', B, B.nearestS(40, 60), -1, 47, 262, A, { t0: 0.70, amp: -5.0, w: 0.22 }));
 
-  // -- B×C 环圈（4 条，围绕交点 (40,~95)）--
-  ramps.push(loopRamp('匝道R5·C转B北', C, C.nearestS(150, 190), -1, 40, 262, B));
-  ramps.push(loopRamp('匝道R6·B北转C', B, B.nearestS(40, 0), +1, 40, 262, C));
-  ramps.push(loopRamp('匝道R7·C转B南', C, C.nearestS(-60, 10), +1, 40, 262, B));
-  ramps.push(loopRamp('匝道R8·B南转C', B, B.nearestS(40, 190), -1, 40, 262, C));
+  // -- B×C 环圈（4 条，围绕交点 (40,~95)；半径错开）--
+  ramps.push(loopRamp('匝道R5·C转B北', C, C.nearestS(150, 190), -1, 47, 262, B));
+  ramps.push(loopRamp('匝道R6·B北转C', B, B.nearestS(40, 0), +1, 34, 262, C));
+  ramps.push(loopRamp('匝道R7·C转B南', C, C.nearestS(-60, 10), +1, 53, 262, B));
+  ramps.push(loopRamp('匝道R8·B南转C', B, B.nearestS(40, 190), -1, 39, 262, C));
 
   // -- C×D 定向半直接匝道（4 条，大 S 曲线）--
   const direct = (name, fromRoad, s0, toRoad, s1, ext = 110) => {
