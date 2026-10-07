@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=47';
+import * as THREE from '../vendor/three.module.js?v=48';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=47';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=47';
-import { buildDeck, buildPiers } from './deck.js?v=47';
+} from './textures.js?v=48';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=48';
+import { buildDeck, buildPiers } from './deck.js?v=48';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
-} from './props.js?v=47';
-import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=47';
-import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=47';
+} from './props.js?v=48';
+import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=48';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=48';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
