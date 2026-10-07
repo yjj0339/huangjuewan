@@ -1,6 +1,6 @@
 // 附属设施：路灯、交通标志（门架+立柱牌）、地面道路、公园绿地、乔灌木、远景城市
-import * as THREE from '../vendor/three.module.js?v=44';
-import { mergeGeoms } from './deck.js?v=44';
+import * as THREE from '../vendor/three.module.js?v=47';
+import { mergeGeoms } from './deck.js?v=47';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -203,17 +203,19 @@ export function makeGroundRoads(grounds, asphaltTexByLanes) {
     const len = p0.distanceTo(p1);
     const dir = new THREE.Vector3().subVectors(p1, p0).normalize();
     const side = new THREE.Vector3(dir.z, 0, -dir.x);
-    const rotZ = -Math.atan2(dir.z, dir.x);
+    const roadYaw = Math.atan2(dir.x, dir.z);
     const cw = (road.width - road.median) / 2; // 单幅宽
     for (const sgn of [1, -1]) {
       const t = asphaltTexByLanes[road.lanes].tex.clone();
       t.needsUpdate = true;
       t.repeat.set(1, len / 18);
-      const mesh = new THREE.Mesh(
-        new THREE.PlaneGeometry(cw, len),
+      // 几何先摊平（宽→X 长→Z），再绕世界 Y 轴对齐道路朝向；
+      // 不能用 rotation.z —— Euler XYZ 下会让平面转 90° 铺到别处
+      const geo = new THREE.PlaneGeometry(cw, len);
+      geo.rotateX(-Math.PI / 2);
+      const mesh = new THREE.Mesh(geo,
         new THREE.MeshStandardMaterial({ map: t, roughness: 0.94, color: 0xcfcfcf }));
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.rotation.z = rotZ;
+      mesh.rotation.y = roadYaw;
       mesh.position.set((p0.x + p1.x) / 2, 0.07 + i * 0.02 + (sgn > 0 ? 0.004 : 0), (p0.z + p1.z) / 2)
         .addScaledVector(side, sgn * (road.median / 2 + cw / 2));
       mesh.receiveShadow = true;

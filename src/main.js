@@ -1,18 +1,18 @@
 // 主程序：组装场景、灯光、材质、镜头预设与交互
-import * as THREE from '../vendor/three.module.js?v=44';
+import * as THREE from '../vendor/three.module.js?v=47';
 import {
   makeAsphalt, makeConcrete, makeGrass,
   makeResiFacade, makeGlassFacade, makeShopFacade, makeCityGround,
   makeSign, makeCloudSprite, makeCloudShadowNoise, makeWater,
-} from './textures.js?v=44';
-import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=44';
-import { buildDeck, buildPiers } from './deck.js?v=44';
+} from './textures.js?v=47';
+import { buildNetwork, buildCollisionGrid, auditClearances, LEVELS } from './roads.js?v=47';
+import { buildDeck, buildPiers } from './deck.js?v=47';
 import {
   makeLampGeometry, placeLamps, makeSigns, makeGroundRoads,
   makeVegetation, makeCity, makePark, makeDelineators, makeMedianPosts,
-} from './props.js?v=44';
-import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=44';
-import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=44';
+} from './props.js?v=47';
+import { Traffic, PlayerCar, loadCarAssets } from './traffic.js?v=47';
+import { makeSky, makeLighting, makeClouds, makeOuterGround, makeMountains, makeSunGlow } from './env.js?v=47';
 
 // ---------- 渲染器 ----------
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -180,11 +180,16 @@ if (params.get('pierdbg')) {
 scene.add(pierMesh);
 
 // ---------- 地面：公园 + 道路 + 外圈 ----------
-scene.add(makeOuterGround(grassTex));
+const outerGround = makeOuterGround(grassTex);
+scene.add(outerGround);
 const park = makePark(parkTex, null, waterTex);
 scene.add(park);
 const groundRoads = makeGroundRoads(net.grounds, { 3: asphaltG3, 2: asphaltG2 });
 scene.add(groundRoads);
+// 分层排查开关：?noring=1 隐藏外圈草环 / ?nopark=1 隐藏公园 / ?noroad=1 隐藏地面路
+if (params.get('noring')) outerGround.visible = false;
+if (params.get('nopark')) park.visible = false;
+if (params.get('noroad')) groundRoads.visible = false;
 
 // ---------- 附属 ----------
 const lamps = placeLamps([...net.grounds, ...net.mains, ...net.ramps], makeLampGeometry(), grid);
@@ -234,17 +239,38 @@ loadCarAssets('./assets/cars/').then((assets) => {
   scene.add(player.mesh);
   window.__DIAG.cars = traffic.cars.length;
   if (params.get('drive') || autoDrive) setMode('drive');
-  // 静默实测：?realshot=15,30,45 → 真实时间到点自截并 POST 回本地服务器
+  // 测试钩子：?gspawn=<地面路序号>@<弧长> → 出生在指定地面路（路口转向实测用）
+  if (params.get('gspawn') && player) {
+    const [gi, gs] = params.get('gspawn').split('@');
+    const gr = net.grounds[Number(gi) || 0];
+    player.road = gr;
+    player.s = gs ? Math.min(gr.length - 2, Number(gs)) : gr.length * 0.55;
+    player.speed = 0;
+    player.syncFromRoad();
+  }
+  // 静默实测：?realshot=15,30,45 → 真实时间到点自截并 POST 回本地服务器（perf 带玩家路况）
   if (params.get('realshot')) {
     for (const t of params.get('realshot').split(',').map(Number)) {
       setTimeout(() => {
         try {
           renderer.render(scene, camera);
+          const pinfo = player ? ` | road=${player.road.name}@${player.s.toFixed(0)} spd=${(player.speed * 3.6).toFixed(0)} hdg=${player.heading.toFixed(2)} pos=${player.pos.x.toFixed(0)},${player.pos.z.toFixed(0)} u=${player.laneOff.toFixed(1)} tr=${input.turn} kf=${window.__KEYS_FIRED || 0}` : '';
           renderer.domElement.toBlob((blob) => {
-            if (blob) fetch('/__shot?name=rt_' + t + '&perf=' + encodeURIComponent(document.title), { method: 'POST', body: blob });
+            if (blob) fetch('/__shot?name=rt_' + t + '&perf=' + encodeURIComponent(document.title + pinfo), { method: 'POST', body: blob });
           }, 'image/png');
         } catch (e) { /* 截图失败不影响主循环 */ }
       }, t * 1000);
+    }
+  }
+  // 静默实测按键脚本：?keys=L@8:14,R@20:24 → 在 8~14s 按住左、20~24s 按住右
+  if (params.get('keys')) {
+    const kmap = { L: ['turn', -1], R: ['turn', 1], U: ['up', true], D: ['down', true] };
+    for (const spec of params.get('keys').split(',')) {
+      const m = spec.match(/^([LRUD])@(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+      if (!m) continue;
+      const [prop, val] = kmap[m[1]];
+      setTimeout(() => { input[prop] = val; window.__KEYS_FIRED = (window.__KEYS_FIRED || 0) + 1; }, Number(m[2]) * 1000);
+      setTimeout(() => { if (input[prop] === val) input[prop] = prop === 'turn' ? 0 : false; }, Number(m[3]) * 1000);
     }
   }
   if (params.get('follow')) {
@@ -650,9 +676,8 @@ function tickBody() {
       const rel = exitSide !== 0 ? exitSide * 0.3 : clamp((want - player.laneOff) * 0.10, -0.32, 0.32);
       const desiredH = tanA - rel; // rel>0 = 需向右 = 航向应减小
       input.turn = clamp((player.heading - desiredH) * 2.6, -1, 1);
-    } else {
-      input.turn = 0;
     }
+    // 自由模式下 input.turn 完全归键盘/触屏事件所有，绝不能每帧清零
     let st;
     if (autoDrive) {
       // 自动巡航：轨道伺服（绝对跟线，弯道自动过）

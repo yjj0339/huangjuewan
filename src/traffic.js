@@ -1,8 +1,8 @@
 // 车流 + 玩家驾驶车：Blender GLB 精细车辆（按材质拆分实例化），
 // AI 车流在匝道/主线/地面路之间自动转接，全程连续不凭空消失。
-import * as THREE from '../vendor/three.module.js?v=44';
-import { mergeGeoms } from './deck.js?v=44';
-import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=44';
+import * as THREE from '../vendor/three.module.js?v=47';
+import { mergeGeoms } from './deck.js?v=47';
+import { GLTFLoader } from '../vendor/examples/jsm/loaders/GLTFLoader.js?v=47';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const KINDS = ['sedan', 'suv', 'bus', 'truck'];
@@ -408,6 +408,27 @@ export class PlayerCar {
       this.exitsByRoad.set(r.exit.road, arr);
     }
     for (const arr of this.exitsByRoad.values()) arr.sort((a, b) => a.s - b.s);
+    // G×G 平交路口转向表：路口范围内放宽路缘钳制 + 车头对齐即可转入新路
+    this.turnsByRoad = new Map();
+    {
+      const gl = roads.grounds;
+      for (let i = 0; i < gl.length; i++) for (let j = 0; j < gl.length; j++) {
+        if (i === j) continue;
+        const a = gl[i], b = gl[j];
+        const ad = a.pts[a.pts.length - 1].clone().sub(a.pts[0]).setY(0).normalize();
+        const bdv = b.pts[b.pts.length - 1].clone().sub(b.pts[0]).setY(0).normalize();
+        if (Math.abs(ad.dot(bdv)) > 0.7) continue; // 平行不相交
+        const aAlongX = Math.abs(ad.x) > 0.7;
+        const cx = aAlongX ? b.pts[0].x : a.pts[0].z;
+        const cz = aAlongX ? a.pts[0].z : b.pts[0].x;
+        const sA = a.nearestS(cx, cz);
+        const sB = b.nearestS(cx, cz);
+        let arr = this.turnsByRoad.get(a);
+        if (!arr) { arr = []; this.turnsByRoad.set(a, arr); }
+        if (!arr.some(t => Math.abs(t.s - sA) < 12)) arr.push({ s: sA, other: b, otherS: sB });
+      }
+      for (const arr of this.turnsByRoad.values()) arr.sort((x, y) => x.s - y.s);
+    }
     this.road = roads.mains[0];
     this.s = this.road.length * 0.42;
     {
@@ -462,12 +483,13 @@ export class PlayerCar {
     this.mesh.position.copy(this.pos);
     this.mesh.rotation.y = this.heading;
   }
-  // 切换线路：按当前位置在新路上重投影（位置零跳变；航向保持）
+  // 切换线路：按当前位置在新路上连续精投影（位置零跳变；航向保持）
   switchRoad(r) {
     const oldPos = this.pos.clone();
     const oldH = this.heading;
     this.road = r;
-    this.s = clamp(r.nearestS(oldPos.x, oldPos.z), 1, r.length - 1);
+    const pr = r.nearestSFine(oldPos.x, oldPos.z);
+    this.s = clamp(pr.s, 1, r.length - 1);
     const f = this.road.frameAt(this.s);
     const lat = oldPos.clone().sub(f.p).dot(f.side);
     const [uMin, uMax] = this.uRange(this.road);
@@ -494,10 +516,20 @@ export class PlayerCar {
     const fwdDrive = V3(Math.sin(this.heading), 0, Math.cos(this.heading));
     this.pos.addScaledVector(fwdDrive, this.speed * dt);
 
-    // 道路吸附辅助：投回当前道路，越出路缘则推回并蹭护栏减速
-    this.s = road.nearestS(this.pos.x, this.pos.z);
+    // 道路吸附辅助：连续精确投影（无 4m 量化，杜绝吸附跳变卡顿），
+    // 越出路缘则平滑推回并蹭护栏减速；路口范围内放宽钳制（让转弯能扫过去）
+    const pr = road.nearestSFine(this.pos.x, this.pos.z);
+    this.s = pr.s;
     const f = road.frameAt(this.s);
-    const [uMin, uMax] = this.uRange(road);
+    const [uMin0, uMax0] = this.uRange(road);
+    let uMin = uMin0, uMax = uMax0;
+    let nearCross = null;
+    if (road.kind === 'ground') {
+      for (const tn of (this.turnsByRoad.get(road) || [])) {
+        if (Math.abs(this.s - tn.s) < 17) { nearCross = tn; break; }
+      }
+      if (nearCross) { uMin -= 15; uMax += 15; }
+    }
     const lat = this.pos.clone().sub(f.p).dot(f.side);
     const latC = clamp(lat, uMin - 0.5, uMax + 0.5);
     if (latC !== lat) {
@@ -514,9 +546,12 @@ export class PlayerCar {
         const edgeU = ex.side > 0 ? uMax : uMin;
         const nearEdge = Math.abs(this.laneOff - edgeU) < 4.0;
         const dist = Math.max(0, Math.round(ex.s - this.s));
-        this.hint = dist > 0
-          ? `前方${dist}m ${ex.side > 0 ? '右' : '左'}侧出口：向${ex.side > 0 ? '右' : '左'}转向驶入 ${ex.ramp.name}`
-          : `已到出口：保持向${ex.side > 0 ? '右' : '左'}转向驶入 ${ex.ramp.name}`;
+        const sideTxt = ex.side > 0 ? '右' : '左';
+        this.hint = nearEdge
+          ? (dist > 0
+            ? `前方${dist}m ${sideTxt}侧出口：保持向${sideTxt}转向驶入 ${ex.ramp.name}`
+            : `已到出口：保持向${sideTxt}转向驶入 ${ex.ramp.name}`)
+          : `前方${dist}m ${sideTxt}侧出口：请先向${sideTxt}靠边再转向驶入 ${ex.ramp.name}`;
         if (nearEdge && Math.sign(steer) === ex.side && Math.abs(steer) > 0.2 && this.speed > 3) { taking = ex; break; }
       }
     }
@@ -537,6 +572,19 @@ export class PlayerCar {
     if (!taking && road.mergeHead && this.speed > 0.5) {
       const f0 = road.frameAt(0.5);
       if (this.pos.clone().sub(f0.p).dot(f0.tan) < 0) this.switchRoad(road.mergeHead.road);
+    }
+    // G×G 路口转向：路口范围内车头与新路方向对齐（±60°）即转入（位置连续）
+    this._turnCd = Math.max(0, (this._turnCd || 0) - dt);
+    if (!taking && road.kind === 'ground' && nearCross && this._turnCd === 0 && this.speed > 2) {
+      const fwdH = V3(Math.sin(this.heading), 0, Math.cos(this.heading));
+      const t2 = nearCross.other.frameAt(nearCross.otherS).tan;
+      if (Math.abs(fwdH.dot(t2)) > 0.5) {
+        this.hint = '已转入 ' + nearCross.other.name;
+        this.switchRoad(nearCross.other);
+        this._turnCd = 1.5;
+      } else if (!this.hint) {
+        this.hint = `路口：转向即可驶入 ${nearCross.other.name}`;
+      }
     }
     // 与 AI 车碰撞避让：前方同向近车限制速度并保持间距（不再互相穿透）
     if (this.traffic) {

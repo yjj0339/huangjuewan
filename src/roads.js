@@ -2,7 +2,7 @@
 // 层1 地面道路 G | 层2 主线A y=9 | 层3 主线B y=18 | 层4 主线C y=27 | 层5 主线D y=36
 // 匝道两端通过"锚点自动对接"生成：起点/终点直接吸附到目标道路的采样点，位置、
 // 标高、切向自动吻合，保证结构上真正互通。
-import * as THREE from '../vendor/three.module.js?v=44';
+import * as THREE from '../vendor/three.module.js?v=47';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -77,6 +77,22 @@ export class Road {
       if (d < bd) { bd = d; best = s; }
     }
     return best;
+  }
+  // 连续精确投影：粗定位后在相邻段上做点到线段投影（无量化跳变，驾驶吸附用）
+  nearestSFine(x, z) {
+    const i0 = this._seg(this.nearestS(x, z));
+    let bs = 0, bpx = 0, bpz = 0, bd = Infinity;
+    for (let i = Math.max(0, i0 - 1); i <= Math.min(this.pts.length - 2, i0 + 1); i++) {
+      const a = this.pts[i], b = this.pts[i + 1];
+      const ax = b.x - a.x, az = b.z - a.z;
+      const L2 = ax * ax + az * az || 1e-6;
+      let t = ((x - a.x) * ax + (z - a.z) * az) / L2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const px = a.x + ax * t, pz = a.z + az * t;
+      const d2 = (px - x) ** 2 + (pz - z) ** 2;
+      if (d2 < bd) { bd = d2; bs = this.cum[i] + Math.sqrt(L2) * t; bpx = px; bpz = pz; }
+    }
+    return { s: bs, x: bpx, z: bpz };
   }
 }
 
